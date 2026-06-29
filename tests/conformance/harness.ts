@@ -7,7 +7,7 @@
 import { assertEquals } from "@std/assert";
 import { createHandler } from "../../src/protocol.ts";
 import { MemoryStorage } from "../../src/storage.ts";
-import { find, findAll, parseXML } from "../../src/xmlparse.ts";
+import { find, findAll, findDeep, parseXML } from "../../src/xmlparse.ts";
 
 const NS_DAV = "DAV:";
 
@@ -264,6 +264,13 @@ export function parseMultistatus(body: string): Multistatus {
   }
 
   return new Multistatus(responses);
+}
+
+/** Extract the sync-token value from a multistatus XML body. */
+export function extractSyncToken(body: string): string {
+  const root = parseXML(body);
+  if (!root) return "";
+  return findDeep(root, NS_DAV, "sync-token")?.text.trim() ?? "";
 }
 
 function parseStatusCode(statusLine: string): number {

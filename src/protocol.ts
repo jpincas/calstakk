@@ -411,7 +411,12 @@ function calendarHomeProps(syncToken: string): PropMap {
   return m;
 }
 
-function collectionProps(name: string, displayName: string, syncToken: string): PropMap {
+function collectionProps(
+  name: string,
+  displayName: string,
+  syncToken: string,
+  customProps: Record<string, string> = {},
+): PropMap {
   const m = new Map<string, string>();
   m.set(
     makeKey("DAV:", "resourcetype"),
@@ -467,6 +472,28 @@ function collectionProps(name: string, displayName: string, syncToken: string): 
     makeKey("urn:ietf:params:xml:ns:caldav", "schedule-calendar-transp"),
     C("schedule-calendar-transp", C("opaque")),
   );
+
+  // Apply stored custom property overrides
+  for (const [key, rawValue] of Object.entries(customProps)) {
+    const colonIdx = key.indexOf(":");
+    if (colonIdx < 0) continue;
+    const ns = key.slice(0, colonIdx);
+    const local = key.slice(colonIdx + 1);
+    const existing = m.get(makeKey(ns, local));
+    if (existing !== undefined) {
+      // Re-use the XML element wrapper, replace just the text content
+      const openTag = existing.indexOf(">") + 1;
+      const closeTag = existing.lastIndexOf("<");
+      if (openTag > 0 && closeTag > openTag) {
+        m.set(makeKey(ns, local), existing.slice(0, openTag) + escapeXmlCDATA(rawValue) + existing.slice(closeTag));
+      }
+    } else {
+      // Unknown prop: store as a generic element
+      const localEl = local.replace(/[^a-zA-Z0-9_-]/g, "_");
+      m.set(makeKey(ns, local), `<X:${localEl} xmlns:X="${ns}">${escapeXmlCDATA(rawValue)}</X:${localEl}>`);
+    }
+  }
+
   return m;
 }
 
@@ -567,11 +594,15 @@ function buildCalendarHomeResponse(href: string, pfReq: PropFindRequest): string
 
 function buildCollectionResponse(
   href: string,
-  col: { name: string; displayName: string },
+  col: { name: string; displayName: string; customProps?: Record<string, string> },
   pfReq: PropFindRequest,
   syncToken = "0",
 ): string {
-  return buildPropsResponse(href, collectionProps(col.name, col.displayName, syncToken), pfReq);
+  return buildPropsResponse(
+    href,
+    collectionProps(col.name, col.displayName, syncToken, col.customProps ?? {}),
+    pfReq,
+  );
 }
 
 function buildObjectResponse(
@@ -611,12 +642,16 @@ async function handleProppatch(
   const body = await req.text();
   const ops = parseProppatch(body);
 
-  // Handle displayname update for collections
+  // Persist all writable collection properties
   if (resType === "collection") {
     const colName = collectionNameFromPath(path);
     for (const op of ops) {
-      if (op.local === "displayname" && op.type === "set") {
-        await storage.updateCalendarDisplayName(colName, op.value);
+      if (op.type === "set") {
+        if (op.local === "displayname") {
+          await storage.updateCalendarDisplayName(colName, op.value);
+        } else {
+          await storage.updateCalendarProp(colName, `${op.ns}:${op.local}`, op.value);
+        }
       }
     }
   }
@@ -796,6 +831,13 @@ async function handleSyncCollection(
     : { type: "prop", names: sync.requestedProps };
 
   const syncResult = await storage.getChanges(colName, sync.syncToken);
+  if (syncResult.invalidToken) {
+    return xmlResponse(
+      403,
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+        `<D:error xmlns:D="DAV:"><D:valid-sync-token/></D:error>`,
+    );
+  }
   const responses: string[] = [];
 
   for (const change of syncResult.changes) {
