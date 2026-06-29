@@ -64,6 +64,9 @@ web-dev:
 # Dev
 # ---------------------------------------------------------------------------
 
+conformance:
+	go test -count=1 -timeout 300s ./internal/conformance/...
+
 iterate:
 	go build ./cmd/calstakk
 
