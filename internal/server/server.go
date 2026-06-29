@@ -12,8 +12,8 @@ import (
 	"os"
 	"strings"
 
-	gocaldav "github.com/emersion/go-webdav/caldav"
-	caldavbackend "github.com/jpincas/calstakk/internal/caldav"
+	"github.com/jpincas/calstakk/internal/backend"
+	"github.com/jpincas/calstakk/internal/protocol/caldav"
 )
 
 // Server routes requests to CalDAV and the web UI.
@@ -23,9 +23,9 @@ type Server struct {
 }
 
 // New returns a Server backed by the given CalDAV backend.
-func New(backend *caldavbackend.Backend) *Server {
+func New(backend *backend.Backend) *Server {
 	return &Server{
-		caldavHandler: &gocaldav.Handler{Backend: backend},
+		caldavHandler: &caldav.Handler{Backend: backend},
 	}
 }
 

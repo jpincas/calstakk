@@ -4,7 +4,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/jpincas/calstakk/internal/caldav"
+	"github.com/jpincas/calstakk/internal/backend"
 	"github.com/jpincas/calstakk/internal/cli"
 	"github.com/jpincas/calstakk/internal/config"
 	"github.com/jpincas/calstakk/internal/server"
@@ -36,9 +36,9 @@ func main() {
 				return err
 			}
 
-			backend := caldav.New(store)
+			be := backend.New(store)
 
-			srv := server.New(backend).
+			srv := server.New(be).
 				WithWebDir(cfg.Server.WebDir)
 
 			if cfg.Server.WebDir != "" {

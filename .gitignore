@@ -1,7 +1,7 @@
 # Compiled binaries
 /bin/
 /dist/
-calstakk
+/calstakk
 
 # Config overrides (per-machine, never committed)
 .env*.local

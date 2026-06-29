@@ -1,5 +1,5 @@
 // Package caldav implements the caldav.Backend interface for CalStakk.
-package caldav
+package backend
 
 import (
 	"bytes"
@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/emersion/go-ical"
-	"github.com/emersion/go-webdav"
-	gocaldav "github.com/emersion/go-webdav/caldav"
+	"github.com/jpincas/calstakk/internal/protocol/caldav"
+	"github.com/jpincas/calstakk/internal/protocol/webdav"
 	"github.com/jpincas/calstakk/internal/storage"
 )
 
@@ -36,15 +36,15 @@ func (b *Backend) CalendarHomeSetPath(_ context.Context) (string, error) {
 }
 
 // ListCalendars lists all collections.
-func (b *Backend) ListCalendars(_ context.Context) ([]gocaldav.Calendar, error) {
+func (b *Backend) ListCalendars(_ context.Context) ([]caldav.Calendar, error) {
 	cols, err := b.store.ListCollections()
 	if err != nil {
 		return nil, fmt.Errorf("listing calendars: %w", err)
 	}
 
-	cals := make([]gocaldav.Calendar, len(cols))
+	cals := make([]caldav.Calendar, len(cols))
 	for i, c := range cols {
-		cals[i] = gocaldav.Calendar{
+		cals[i] = caldav.Calendar{
 			Path:                  c.Path,
 			Name:                  c.DisplayName,
 			SupportedComponentSet: []string{ical.CompEvent, ical.CompToDo},
@@ -54,7 +54,7 @@ func (b *Backend) ListCalendars(_ context.Context) ([]gocaldav.Calendar, error) 
 }
 
 // GetCalendar returns a single calendar by URL path.
-func (b *Backend) GetCalendar(_ context.Context, path string) (*gocaldav.Calendar, error) {
+func (b *Backend) GetCalendar(_ context.Context, path string) (*caldav.Calendar, error) {
 	col, err := b.store.GetCollection(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -63,7 +63,7 @@ func (b *Backend) GetCalendar(_ context.Context, path string) (*gocaldav.Calenda
 		return nil, err
 	}
 
-	return &gocaldav.Calendar{
+	return &caldav.Calendar{
 		Path:                  col.Path,
 		Name:                  col.DisplayName,
 		SupportedComponentSet: []string{ical.CompEvent, ical.CompToDo},
@@ -71,7 +71,7 @@ func (b *Backend) GetCalendar(_ context.Context, path string) (*gocaldav.Calenda
 }
 
 // CreateCalendar creates a new calendar collection.
-func (b *Backend) CreateCalendar(_ context.Context, cal *gocaldav.Calendar) error {
+func (b *Backend) CreateCalendar(_ context.Context, cal *caldav.Calendar) error {
 	name := storage.CollectionName(cal.Path)
 	if name == "" {
 		return webdav.NewHTTPError(http.StatusBadRequest, fmt.Errorf("invalid calendar path"))
@@ -83,7 +83,7 @@ func (b *Backend) CreateCalendar(_ context.Context, cal *gocaldav.Calendar) erro
 }
 
 // GetCalendarObject returns a single calendar object by URL path.
-func (b *Backend) GetCalendarObject(_ context.Context, path string, _ *gocaldav.CalendarCompRequest) (*gocaldav.CalendarObject, error) {
+func (b *Backend) GetCalendarObject(_ context.Context, path string, _ *caldav.CalendarCompRequest) (*caldav.CalendarObject, error) {
 	obj, err := b.store.GetObject(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -102,7 +102,7 @@ func (b *Backend) GetCalendarObject(_ context.Context, path string, _ *gocaldav.
 		return nil, fmt.Errorf("decoding ical: %w", err)
 	}
 
-	return &gocaldav.CalendarObject{
+	return &caldav.CalendarObject{
 		Path:          obj.Path,
 		ModTime:       obj.ModTime,
 		ContentLength: obj.Size,
@@ -112,7 +112,7 @@ func (b *Backend) GetCalendarObject(_ context.Context, path string, _ *gocaldav.
 }
 
 // ListCalendarObjects lists all objects in a collection.
-func (b *Backend) ListCalendarObjects(_ context.Context, path string, _ *gocaldav.CalendarCompRequest) ([]gocaldav.CalendarObject, error) {
+func (b *Backend) ListCalendarObjects(_ context.Context, path string, _ *caldav.CalendarCompRequest) ([]caldav.CalendarObject, error) {
 	objs, err := b.store.ListObjects(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -121,7 +121,7 @@ func (b *Backend) ListCalendarObjects(_ context.Context, path string, _ *gocalda
 		return nil, err
 	}
 
-	cos := make([]gocaldav.CalendarObject, 0, len(objs))
+	cos := make([]caldav.CalendarObject, 0, len(objs))
 	for _, obj := range objs {
 		data, err := b.store.ReadObject(obj.Path)
 		if err != nil {
@@ -131,7 +131,7 @@ func (b *Backend) ListCalendarObjects(_ context.Context, path string, _ *gocalda
 		if err != nil {
 			continue
 		}
-		cos = append(cos, gocaldav.CalendarObject{
+		cos = append(cos, caldav.CalendarObject{
 			Path:          obj.Path,
 			ModTime:       obj.ModTime,
 			ContentLength: obj.Size,
@@ -143,7 +143,7 @@ func (b *Backend) ListCalendarObjects(_ context.Context, path string, _ *gocalda
 }
 
 // QueryCalendarObjects returns objects matching the given query.
-func (b *Backend) QueryCalendarObjects(_ context.Context, path string, query *gocaldav.CalendarQuery) ([]gocaldav.CalendarObject, error) {
+func (b *Backend) QueryCalendarObjects(_ context.Context, path string, query *caldav.CalendarQuery) ([]caldav.CalendarObject, error) {
 	objs, err := b.store.ListObjects(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -152,7 +152,7 @@ func (b *Backend) QueryCalendarObjects(_ context.Context, path string, query *go
 		return nil, err
 	}
 
-	var cos []gocaldav.CalendarObject
+	var cos []caldav.CalendarObject
 	for _, obj := range objs {
 		data, err := b.store.ReadObject(obj.Path)
 		if err != nil {
@@ -162,14 +162,14 @@ func (b *Backend) QueryCalendarObjects(_ context.Context, path string, query *go
 		if err != nil {
 			continue
 		}
-		co := gocaldav.CalendarObject{
+		co := caldav.CalendarObject{
 			Path:          obj.Path,
 			ModTime:       obj.ModTime,
 			ContentLength: obj.Size,
 			ETag:          obj.ETag,
 			Data:          cal,
 		}
-		ok, err := gocaldav.Match(query.CompFilter, &co)
+		ok, err := caldav.Match(query.CompFilter, &co)
 		if err != nil || !ok {
 			continue
 		}
@@ -179,8 +179,8 @@ func (b *Backend) QueryCalendarObjects(_ context.Context, path string, query *go
 }
 
 // PutCalendarObject writes a calendar object to storage.
-func (b *Backend) PutCalendarObject(_ context.Context, path string, cal *ical.Calendar, opts *gocaldav.PutCalendarObjectOptions) (*gocaldav.CalendarObject, error) {
-	compType, uid, err := gocaldav.ValidateCalendarObject(cal)
+func (b *Backend) PutCalendarObject(_ context.Context, path string, cal *ical.Calendar, opts *caldav.PutCalendarObjectOptions) (*caldav.CalendarObject, error) {
+	compType, uid, err := caldav.ValidateCalendarObject(cal)
 	if err != nil {
 		return nil, webdav.NewHTTPError(http.StatusBadRequest, err)
 	}
@@ -227,7 +227,7 @@ func (b *Backend) PutCalendarObject(_ context.Context, path string, cal *ical.Ca
 		return nil, err
 	}
 
-	return &gocaldav.CalendarObject{
+	return &caldav.CalendarObject{
 		Path:          obj.Path,
 		ModTime:       obj.ModTime,
 		ContentLength: obj.Size,

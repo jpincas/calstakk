@@ -1,4 +1,4 @@
-package caldav_test
+package backend_test
 
 import (
 	"context"
@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/emersion/go-ical"
-	gocaldav "github.com/emersion/go-webdav/caldav"
-	caldavbackend "github.com/jpincas/calstakk/internal/caldav"
+	"github.com/jpincas/calstakk/internal/backend"
+	"github.com/jpincas/calstakk/internal/protocol/caldav"
 	"github.com/jpincas/calstakk/internal/server"
 	"github.com/jpincas/calstakk/internal/storage"
 	"github.com/stretchr/testify/require"
@@ -16,19 +16,19 @@ import (
 
 // newTestServer creates an in-process CalDAV server backed by a temp directory
 // and returns a caldav.Client pointed at it.
-func newTestServer(t *testing.T) (*gocaldav.Client, *httptest.Server) {
+func newTestServer(t *testing.T) (*caldav.Client, *httptest.Server) {
 	t.Helper()
 
 	store, err := storage.New(t.TempDir())
 	require.NoError(t, err)
 
-	backend := caldavbackend.New(store)
-	srv := server.New(backend)
+	be := backend.New(store)
+	srv := server.New(be)
 
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 
-	client, err := gocaldav.NewClient(ts.Client(), ts.URL)
+	client, err := caldav.NewClient(ts.Client(), ts.URL)
 	require.NoError(t, err)
 
 	return client, ts
@@ -39,7 +39,7 @@ func ctx() context.Context {
 }
 
 // findHomeSet is a test helper.
-func findHomeSet(t *testing.T, client *gocaldav.Client) string {
+func findHomeSet(t *testing.T, client *caldav.Client) string {
 	t.Helper()
 	principal, err := client.FindCurrentUserPrincipal(ctx())
 	require.NoError(t, err)
@@ -230,10 +230,10 @@ func TestEvent_ListInCollection(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	objects, err := client.QueryCalendar(ctx(), homeSet+"/work", &gocaldav.CalendarQuery{
-		CompFilter: gocaldav.CompFilter{
+	objects, err := client.QueryCalendar(ctx(), homeSet+"/work", &caldav.CalendarQuery{
+		CompFilter: caldav.CompFilter{
 			Name:  "VCALENDAR",
-			Comps: []gocaldav.CompFilter{{Name: "VEVENT"}},
+			Comps: []caldav.CompFilter{{Name: "VEVENT"}},
 		},
 	})
 	require.NoError(t, err)
@@ -259,10 +259,10 @@ func TestEvent_TimeRangeFilter(t *testing.T) {
 	from := time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC)
 
-	objects, err := client.QueryCalendar(ctx(), homeSet+"/work", &gocaldav.CalendarQuery{
-		CompFilter: gocaldav.CompFilter{
+	objects, err := client.QueryCalendar(ctx(), homeSet+"/work", &caldav.CalendarQuery{
+		CompFilter: caldav.CompFilter{
 			Name: "VCALENDAR",
-			Comps: []gocaldav.CompFilter{{
+			Comps: []caldav.CompFilter{{
 				Name:  "VEVENT",
 				Start: from,
 				End:   to,

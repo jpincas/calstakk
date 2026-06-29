@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/emersion/go-webdav/caldav"
 	"github.com/google/uuid"
 	"github.com/jpincas/calstakk/internal/dto"
 	calical "github.com/jpincas/calstakk/internal/ical"
+	"github.com/jpincas/calstakk/internal/protocol/caldav"
 	"github.com/spf13/cobra"
 )
 

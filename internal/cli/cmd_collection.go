@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/emersion/go-webdav/caldav"
 	"github.com/jpincas/calstakk/internal/dto"
+	"github.com/jpincas/calstakk/internal/protocol/caldav"
 	"github.com/jpincas/calstakk/internal/storage"
 	"github.com/spf13/cobra"
 )

@@ -1,4 +1,4 @@
-package caldav
+package backend
 
 import (
 	"bytes"
@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/emersion/go-ical"
-	"github.com/emersion/go-webdav"
+	"github.com/jpincas/calstakk/internal/protocol/webdav"
 	"github.com/jpincas/calstakk/internal/storage"
 )
 
