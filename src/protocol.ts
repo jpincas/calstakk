@@ -83,11 +83,6 @@ async function route(req: Request, storage: Storage, config: Config): Promise<Re
   const path = decodeURIComponent(url.pathname);
   const method = req.method.toUpperCase();
 
-  // SPA passthrough (serve static files at /app/)
-  if (path.startsWith("/app/")) {
-    return respond(404, "Not found");
-  }
-
   // /.well-known/caldav redirect
   if (path === "/.well-known/caldav") {
     return respond(308, "", { Location: PRINCIPAL_PATH });

@@ -50,7 +50,7 @@ export function loadConfig(): Config {
       host,
       port,
       kvPath: env("CALSTAKK_KV_PATH", "") || undefined,
-      webDir: env("CALSTAKK_WEB_DIR", "") || undefined,
+      webDir: env("CALSTAKK_WEB_DIR", "web/dist") || undefined,
     },
     user: {
       username: env("CALSTAKK_USERNAME", "calstakk"),

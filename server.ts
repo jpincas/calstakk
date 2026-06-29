@@ -6,6 +6,7 @@
 //
 // All other config is read from environment variables — see src/config.ts.
 
+import { serveDir } from "@std/http/file-server";
 import { createHandler } from "./src/protocol.ts";
 import { MemoryStorage } from "./src/storage.ts";
 import { KVStorage } from "./src/storage_kv.ts";
@@ -25,12 +26,34 @@ if (useMemory) {
   console.log(`Storage: Deno KV${config.server.kvPath ? ` (${config.server.kvPath})` : " (default)"}`);
 }
 
-const handler = createHandler(storage, config);
+const caldavHandler = createHandler(storage, config);
+const { host, port, webDir } = config.server;
 
-const { host, port } = config.server;
+const handler = async (req: Request): Promise<Response> => {
+  const url = new URL(req.url);
+
+  // Serve the React SPA at /app/
+  if (url.pathname.startsWith("/app/") && webDir) {
+    const resp = await serveDir(req, { fsRoot: webDir, urlRoot: "app", quiet: true });
+    // SPA fallback: unknown paths (client-side routes) get index.html
+    if (resp.status === 404) {
+      try {
+        const index = await Deno.readFile(`${webDir}/index.html`);
+        return new Response(index, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+      } catch {
+        return resp;
+      }
+    }
+    return resp;
+  }
+
+  return caldavHandler(req);
+};
+
 console.log(`CalStakk listening on http://${host}:${port}`);
 console.log(`  Principal:     http://${host}:${port}/calstakk`);
 console.log(`  Calendar home: http://${host}:${port}/calstakk/calendars`);
+console.log(`  Web UI:        http://${host}:${port}/app/${webDir ? "" : "(disabled — set CALSTAKK_WEB_DIR)"}`);
 if (config.user.password) {
   console.log(`  Auth:          ${config.user.username} / (password set)`);
 } else {

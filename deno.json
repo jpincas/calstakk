@@ -4,13 +4,16 @@
   "tasks": {
     "start": "deno run --unstable-kv --allow-net --allow-read --allow-write --allow-env server.ts",
     "dev": "deno run --watch --unstable-kv --allow-net --allow-read --allow-write --allow-env server.ts",
+    "web-dev": "cd web && npm run dev",
+    "web-build": "cd web && npm run build",
     "iterate": "deno check server.ts",
     "check": "deno lint && deno check server.ts && deno test --allow-net --allow-env tests/",
     "test": "deno test --allow-net --allow-env tests/",
     "conformance": "deno test --allow-net --allow-env tests/conformance/"
   },
   "imports": {
-    "@std/assert": "jsr:@std/assert@^1"
+    "@std/assert": "jsr:@std/assert@^1",
+    "@std/http": "jsr:@std/http@^1"
   },
   "compilerOptions": {
     "lib": ["deno.window", "deno.unstable", "dom"]
