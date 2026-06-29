@@ -1,0 +1,112 @@
+{
+  "model": "opus",
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Edit",
+      "Write",
+
+      "Bash(cat:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(sed:*)",
+      "Bash(echo:*)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)",
+      "Bash(cp:*)",
+      "Bash(rm:*)",
+      "Bash(curl:*)",
+      "Bash(pkill:*)",
+      "Bash(kill:*)",
+      "Bash(ss:*)",
+
+      "Bash(make check)",
+      "Bash(make check-fast)",
+      "Bash(make check-race)",
+      "Bash(make iterate)",
+      "Bash(make build)",
+      "Bash(make test)",
+      "Bash(make lint)",
+      "Bash(make generate)",
+      "Bash(make gen-check)",
+      "Bash(make tidy-check)",
+      "Bash(make schema-apply)",
+      "Bash(make schema-diff)",
+      "Bash(make seed-demo)",
+      "Bash(make db-reset)",
+      "Bash(make stop)",
+      "Bash(make run)",
+
+      "Bash(make web-install)",
+      "Bash(make web-typecheck)",
+      "Bash(make web-lint)",
+      "Bash(make web-build)",
+
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(go vet:*)",
+      "Bash(go run:*)",
+      "Bash(go mod tidy)",
+
+      "Bash(sqlc generate)",
+      "Bash(sqlc verify)",
+      "Bash(tygo generate)",
+
+      "Bash(atlas schema diff:*)",
+      "Bash(atlas schema apply:*)",
+      "Bash(atlas migrate apply:*)",
+      "Bash(atlas migrate status:*)",
+
+      "Bash(golangci-lint run:*)",
+      "Bash(gofmt:*)",
+      "Bash(goimports:*)",
+
+      "Bash(npm install:*)",
+      "Bash(npm ci:*)",
+      "Bash(npm run:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vite:*)",
+      "Bash(npx shadcn:*)",
+      "Bash(npx eslint:*)",
+
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch)"
+    ],
+    "deny": [
+      "Bash(git commit:--no-verify)",
+      "Bash(git push:--force*)",
+      "Bash(git push:-f*)",
+      "Bash(rm -rf:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/deny-bypass.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "make check-fast"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Pre-commit gate. Runs `make check` — the single source of truth for
+# "is the repo clean?". Fails the commit if anything is off.
+#
+# To enable in a fresh clone, run once:
+#   git config core.hooksPath .githooks
+#
+# This hook is checked into the repo on purpose: it travels with the project
+# and is the same gate the Claude Code Stop hook (lighter `check-fast`) and
+# CI invoke. Don't bypass with --no-verify; fix the failure.
+
+set -euo pipefail
+
+exec make check

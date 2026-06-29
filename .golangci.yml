@@ -1,0 +1,49 @@
+# Frictionless Stack — canonical golangci-lint config.
+#
+# Tight, opinionated, no kitchen sink. Linters fall into three groups:
+#   1. Default bug catchers (govet, staticcheck, errcheck, unused, ineffassign)
+#   2. Stack-shaped (sqlclosecheck, rowserrcheck, bodyclose, noctx, nilerr, errorlint)
+#   3. Quality-of-life (misspell)
+#
+# Formatters (gofmt, goimports) run via the `formatters` block, which is the
+# v2 schema's home for them. `make lint` runs both linters and formatters in
+# one pass, so there is no separate `fmt` target in the Makefile.
+#
+# To add a linter: edit this file in the canon repo and propagate. Do not
+# fork per-project. Drift starts here.
+
+version: "2"
+
+run:
+  timeout: 3m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - misspell
+    - nilerr
+    - noctx
+    - rowserrcheck
+    - sqlclosecheck
+
+  settings:
+    errorlint:
+      errorf: true       # require %w for error wrapping in fmt.Errorf
+      asserts: true      # require errors.As over type assertions on errors
+      comparison: true   # require errors.Is over == comparison
+
+    misspell:
+      locale: US
+
+  exclusions:
+    # Generated code: sqlc output is machine-written and should not be
+    # hand-edited; linting it is noise.
+    paths:
+      - "internal/db/sqlc/.*\\.go$"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

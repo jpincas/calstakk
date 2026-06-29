@@ -1,0 +1,20 @@
+# Compiled binaries
+/bin/
+/dist/
+calstakk
+
+# Config overrides (per-machine, never committed)
+.env*.local
+
+# Editor / OS noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Server logs
+*.log
+
+# Web UI build artifacts
+web/dist/
+web/node_modules/
