@@ -7,6 +7,7 @@
 import { assertEquals } from "@std/assert";
 import { createHandler } from "../../src/protocol.ts";
 import { MemoryStorage } from "../../src/storage.ts";
+import { loadConfig } from "../../src/config.ts";
 import { find, findAll, findDeep, parseXML } from "../../src/xmlparse.ts";
 
 const NS_DAV = "DAV:";
@@ -304,7 +305,7 @@ export class TestServer {
 
   static create(): TestServer {
     const storage = new MemoryStorage();
-    const handler = createHandler(storage);
+    const handler = createHandler(storage, loadConfig());
     const controller = new AbortController();
     const server = Deno.serve(
       {

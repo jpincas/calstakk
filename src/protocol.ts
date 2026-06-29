@@ -31,6 +31,7 @@ import {
 
 import type { Storage } from "./storage.ts";
 import { extractUID, matchesFilter, validateCalendarObject, parseICS } from "./ical.ts";
+import type { Config } from "./config.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -60,10 +61,13 @@ const ALLOW_HEADER =
 
 // ─── createHandler ────────────────────────────────────────────────────────────
 
-export function createHandler(storage: Storage): (req: Request) => Promise<Response> {
+export function createHandler(
+  storage: Storage,
+  config: Config,
+): (req: Request) => Promise<Response> {
   return async (req: Request): Promise<Response> => {
     try {
-      return await route(req, storage);
+      return await route(req, storage, config);
     } catch (err) {
       if (err instanceof HTTPError) {
         return textResponse(err.code, err.message);
@@ -74,7 +78,7 @@ export function createHandler(storage: Storage): (req: Request) => Promise<Respo
   };
 }
 
-async function route(req: Request, storage: Storage): Promise<Response> {
+async function route(req: Request, storage: Storage, config: Config): Promise<Response> {
   const url = new URL(req.url);
   const path = decodeURIComponent(url.pathname);
   const method = req.method.toUpperCase();
@@ -103,7 +107,7 @@ async function route(req: Request, storage: Storage): Promise<Response> {
     case "DELETE":
       return await handleDelete(path, resType, storage);
     case "PROPFIND":
-      return await handlePropfind(req, path, resType, storage);
+      return await handlePropfind(req, path, resType, storage, config);
     case "PROPPATCH":
       return await handleProppatch(req, path, resType, storage);
     case "MKCOL":
@@ -305,6 +309,7 @@ async function handlePropfind(
   path: string,
   resType: ResourceType,
   storage: Storage,
+  config: Config,
 ): Promise<Response> {
   const depth = parseDepth(req.headers.get("Depth"));
   const body = await req.text();
@@ -315,13 +320,13 @@ async function handlePropfind(
   switch (resType) {
     case "root":
     case "principal":
-      responses.push(buildPrincipalResponse(path, pfReq));
+      responses.push(buildPrincipalResponse(path, pfReq, config));
       if (depth !== "0") {
         responses.push(buildCalendarHomeResponse(CALENDAR_HOME_PATH, pfReq));
         if (depth === "infinity") {
           const cals = await storage.listCalendars();
           for (const cal of cals) {
-            responses.push(buildCollectionResponse(cal.href, cal, pfReq));
+            responses.push(buildCollectionResponse(cal.href, cal, pfReq, "0", config));
           }
         }
       }
@@ -332,7 +337,7 @@ async function handlePropfind(
       if (depth !== "0") {
         const cals = await storage.listCalendars();
         for (const cal of cals) {
-          responses.push(buildCollectionResponse(cal.href, cal, pfReq));
+          responses.push(buildCollectionResponse(cal.href, cal, pfReq, "0", config));
           if (depth === "infinity") {
             const objs = await storage.listObjects(cal.name);
             for (const obj of objs) {
@@ -348,7 +353,7 @@ async function handlePropfind(
       const col = await storage.getCalendar(colName);
       if (!col) return respond(404, "Not found");
       const syncToken = await storage.getSyncToken(colName);
-      responses.push(buildCollectionResponse(path, col, pfReq, syncToken));
+      responses.push(buildCollectionResponse(path, col, pfReq, syncToken, config));
       if (depth !== "0") {
         const objs = await storage.listObjects(colName);
         for (const obj of objs) {
@@ -382,10 +387,10 @@ function makeKey(ns: string, local: string): string {
   return `${ns}:${local}`;
 }
 
-function principalProps(): PropMap {
+function principalProps(config: Config): PropMap {
   const m = new Map<string, string>();
   m.set(makeKey("DAV:", "resourcetype"), D("resourcetype", D("collection") + D("principal")));
-  m.set(makeKey("DAV:", "displayname"), D("displayname", "CalStakk"));
+  m.set(makeKey("DAV:", "displayname"), D("displayname", config.user.displayName));
   m.set(
     makeKey("DAV:", "current-user-principal"),
     D("current-user-principal", D("href", PRINCIPAL_PATH)),
@@ -395,6 +400,12 @@ function principalProps(): PropMap {
     C("calendar-home-set", D("href", CALENDAR_HOME_PATH)),
   );
   m.set(makeKey("DAV:", "creationdate"), D("creationdate", new Date().toISOString()));
+  if (config.user.email) {
+    m.set(
+      makeKey("urn:ietf:params:xml:ns:caldav", "calendar-user-address-set"),
+      C("calendar-user-address-set", D("href", `mailto:${config.user.email}`)),
+    );
+  }
   return m;
 }
 
@@ -416,6 +427,7 @@ function collectionProps(
   displayName: string,
   syncToken: string,
   customProps: Record<string, string> = {},
+  config?: Config,
 ): PropMap {
   const m = new Map<string, string>();
   m.set(
@@ -466,7 +478,7 @@ function collectionProps(
   );
   m.set(
     makeKey("urn:ietf:params:xml:ns:caldav", "calendar-timezone-id"),
-    C("calendar-timezone-id", "UTC"),
+    C("calendar-timezone-id", config?.user.timezone ?? "UTC"),
   );
   m.set(
     makeKey("urn:ietf:params:xml:ns:caldav", "schedule-calendar-transp"),
@@ -583,8 +595,8 @@ function buildEmptyProp(ns: string, local: string): string {
   return `<X:${local} xmlns:X="${ns}"/>`;
 }
 
-function buildPrincipalResponse(href: string, pfReq: PropFindRequest): string {
-  return buildPropsResponse(href, principalProps(), pfReq);
+function buildPrincipalResponse(href: string, pfReq: PropFindRequest, config: Config): string {
+  return buildPropsResponse(href, principalProps(config), pfReq);
 }
 
 function buildCalendarHomeResponse(href: string, pfReq: PropFindRequest): string {
@@ -597,10 +609,11 @@ function buildCollectionResponse(
   col: { name: string; displayName: string; customProps?: Record<string, string> },
   pfReq: PropFindRequest,
   syncToken = "0",
+  config?: Config,
 ): string {
   return buildPropsResponse(
     href,
-    collectionProps(col.name, col.displayName, syncToken, col.customProps ?? {}),
+    collectionProps(col.name, col.displayName, syncToken, col.customProps ?? {}, config),
     pfReq,
   );
 }

@@ -2,18 +2,17 @@
 // Usage: deno run --unstable-kv --allow-net --allow-read --allow-write --allow-env server.ts
 //
 // Flags:
-//   --port=<n>    Listen port (default 5232)
 //   --memory      Use in-memory storage instead of Deno KV (no persistence)
 //
-// Env vars:
-//   CALSTAKK_KV_PATH   Path to the KV database file (default: Deno default location)
+// All other config is read from environment variables — see src/config.ts.
 
 import { createHandler } from "./src/protocol.ts";
 import { MemoryStorage } from "./src/storage.ts";
 import { KVStorage } from "./src/storage_kv.ts";
+import { loadConfig } from "./src/config.ts";
 import type { Storage } from "./src/storage.ts";
 
-const port = parseInt(Deno.args.find((a) => a.startsWith("--port="))?.split("=")[1] ?? "") || 5232;
+const config = loadConfig();
 const useMemory = Deno.args.includes("--memory");
 
 let storage: Storage;
@@ -21,16 +20,21 @@ if (useMemory) {
   storage = new MemoryStorage();
   console.log("Storage: in-memory (no persistence)");
 } else {
-  const kvPath = Deno.env.get("CALSTAKK_KV_PATH");
-  const kv = await Deno.openKv(kvPath);
+  const kv = await Deno.openKv(config.server.kvPath);
   storage = new KVStorage(kv);
-  console.log(`Storage: Deno KV${kvPath ? ` (${kvPath})` : " (default)"}`);
+  console.log(`Storage: Deno KV${config.server.kvPath ? ` (${config.server.kvPath})` : " (default)"}`);
 }
 
-const handler = createHandler(storage);
+const handler = createHandler(storage, config);
 
-console.log(`CalStakk listening on http://localhost:${port}`);
-console.log(`  Principal:     http://localhost:${port}/calstakk`);
-console.log(`  Calendar home: http://localhost:${port}/calstakk/calendars`);
+const { host, port } = config.server;
+console.log(`CalStakk listening on http://${host}:${port}`);
+console.log(`  Principal:     http://${host}:${port}/calstakk`);
+console.log(`  Calendar home: http://${host}:${port}/calstakk/calendars`);
+if (config.user.password) {
+  console.log(`  Auth:          ${config.user.username} / (password set)`);
+} else {
+  console.log("  Auth:          none (set CALSTAKK_PASSWORD to enable)");
+}
 
-Deno.serve({ port }, handler);
+Deno.serve({ hostname: host, port }, handler);
