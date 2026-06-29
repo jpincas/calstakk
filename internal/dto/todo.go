@@ -13,6 +13,8 @@ type Todo struct {
 	Priority        int      `json:"priority,omitempty"`
 	Categories      []string `json:"categories,omitempty"`
 	RelatedTo       string   `json:"related_to,omitempty"`
+	Timezone        string   `json:"timezone,omitempty"`
+	Created         string   `json:"created,omitempty"`
 	Children        []Todo   `json:"children,omitempty"`
 	Href            string   `json:"href"`
 }

@@ -27,6 +27,7 @@ export interface Todo {
   status?: string
   priority?: number
   related_to?: string
+  categories?: string[]
   href: string
 }
 

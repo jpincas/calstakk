@@ -23,5 +23,6 @@ type Event struct {
 	RDates       []string `json:"rdates,omitempty"`
 	RecurrenceID string   `json:"recurrence_id,omitempty"`
 	Timezone     string   `json:"timezone,omitempty"`
+	Created      string   `json:"created,omitempty"`
 	Href         string   `json:"href"`
 }

@@ -29,21 +29,18 @@ func EventToDTO(comp *ical.Component, href string) (*dto.Event, error) {
 	summary, _ := comp.Props.Text(ical.PropSummary)
 	e.Summary = summary
 
-	// DTSTART — detect DATE vs DATETIME
+	// DTSTART — detect DATE vs DATETIME; DateTime(nil) reads TZID param automatically.
 	if dtsProp := comp.Props.Get(ical.PropDateTimeStart); dtsProp != nil {
-		valueParam := dtsProp.Params.Get(ical.ParamValue)
-		if valueParam == string(ical.ValueDate) {
+		if dtsProp.Params.Get(ical.ParamValue) == string(ical.ValueDate) {
 			e.AllDay = true
-			t, err := dtsProp.DateTime(time.UTC)
-			if err == nil {
+			if t, err := dtsProp.DateTime(nil); err == nil {
 				e.Start = t.Format("2006-01-02")
 			}
 		} else {
-			t, err := dtsProp.DateTime(time.Local)
-			if err == nil {
+			if t, err := dtsProp.DateTime(nil); err == nil {
 				e.Start = t.Format(time.RFC3339)
-				if tzProp := dtsProp.Params.Get(ical.ParamTimezoneID); tzProp != "" {
-					e.Timezone = tzProp
+				if loc := t.Location(); loc != nil && loc.String() != "UTC" {
+					e.Timezone = loc.String()
 				}
 			}
 		}
@@ -51,15 +48,12 @@ func EventToDTO(comp *ical.Component, href string) (*dto.Event, error) {
 
 	// DTEND
 	if dteProp := comp.Props.Get(ical.PropDateTimeEnd); dteProp != nil {
-		valueParam := dteProp.Params.Get(ical.ParamValue)
-		if valueParam == string(ical.ValueDate) {
-			t, err := dteProp.DateTime(time.UTC)
-			if err == nil {
+		if dteProp.Params.Get(ical.ParamValue) == string(ical.ValueDate) {
+			if t, err := dteProp.DateTime(nil); err == nil {
 				e.End = t.Format("2006-01-02")
 			}
 		} else {
-			t, err := dteProp.DateTime(time.Local)
-			if err == nil {
+			if t, err := dteProp.DateTime(nil); err == nil {
 				e.End = t.Format(time.RFC3339)
 			}
 		}
@@ -74,6 +68,13 @@ func EventToDTO(comp *ical.Component, href string) (*dto.Event, error) {
 	e.Description, _ = comp.Props.Text(ical.PropDescription)
 	e.Location, _ = comp.Props.Text(ical.PropLocation)
 	e.Status, _ = comp.Props.Text(ical.PropStatus)
+
+	// CREATED
+	if createdProp := comp.Props.Get(ical.PropCreated); createdProp != nil {
+		if t, err := createdProp.DateTime(nil); err == nil {
+			e.Created = t.UTC().Format(time.RFC3339)
+		}
+	}
 
 	// RRULE
 	if rruleProp := comp.Props.Get(ical.PropRecurrenceRule); rruleProp != nil {
@@ -108,6 +109,26 @@ func EventFromDTO(e *dto.Event) (*ical.Component, error) {
 	comp.Props.SetText(ical.PropSummary, e.Summary)
 	comp.Props.SetDateTime(ical.PropDateTimeStamp, now)
 
+	// CREATED: preserve on update, set to now on first creation.
+	var created time.Time
+	if e.Created != "" {
+		if t, err := parseDateTime(e.Created); err == nil {
+			created = t.UTC()
+		}
+	}
+	if created.IsZero() {
+		created = now
+	}
+	comp.Props.SetDateTime(ical.PropCreated, created)
+
+	// Resolve named timezone for datetime properties once.
+	var tzLoc *time.Location
+	if e.Timezone != "" {
+		if loc, err := time.LoadLocation(e.Timezone); err == nil {
+			tzLoc = loc
+		}
+	}
+
 	// DTSTART
 	if e.Start != "" {
 		if e.AllDay {
@@ -121,18 +142,16 @@ func EventFromDTO(e *dto.Event) (*ical.Component, error) {
 			if err != nil {
 				return nil, fmt.Errorf("parsing dtstart %q: %w", e.Start, err)
 			}
-			prop := ical.NewProp(ical.PropDateTimeStart)
-			if e.Timezone != "" {
-				prop.SetDateTime(t)
-				prop.Params.Set(ical.ParamTimezoneID, e.Timezone)
-			} else {
-				prop.SetDateTime(t)
+			// In(loc) keeps the instant, changes the displayed timezone; SetDateTime
+			// then writes TZID=name + no Z suffix — correct per RFC 5545 §3.3.5.
+			if tzLoc != nil {
+				t = t.In(tzLoc)
 			}
-			comp.Props.Set(prop)
+			comp.Props.SetDateTime(ical.PropDateTimeStart, t)
 		}
 	}
 
-	// DTEND
+	// DTEND — apply the same timezone as DTSTART.
 	if e.End != "" {
 		if e.AllDay {
 			t, err := time.Parse("2006-01-02", e.End)
@@ -144,6 +163,9 @@ func EventFromDTO(e *dto.Event) (*ical.Component, error) {
 			t, err := parseDateTime(e.End)
 			if err != nil {
 				return nil, fmt.Errorf("parsing dtend %q: %w", e.End, err)
+			}
+			if tzLoc != nil {
+				t = t.In(tzLoc)
 			}
 			comp.Props.SetDateTime(ical.PropDateTimeEnd, t)
 		}

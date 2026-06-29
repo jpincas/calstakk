@@ -28,31 +28,38 @@ func TodoToDTO(comp *ical.Component, href string) (*dto.Todo, error) {
 	t.Status, _ = comp.Props.Text(ical.PropStatus)
 	t.RelatedTo, _ = comp.Props.Text(ical.PropRelatedTo)
 
-	// DUE
+	// DUE — DateTime(nil) reads TZID param automatically.
 	if dueProp := comp.Props.Get(ical.PropDue); dueProp != nil {
-		valueParam := dueProp.Params.Get(ical.ParamValue)
-		if valueParam == string(ical.ValueDate) {
-			if dt, err := dueProp.DateTime(time.UTC); err == nil {
+		if dueProp.Params.Get(ical.ParamValue) == string(ical.ValueDate) {
+			if dt, err := dueProp.DateTime(nil); err == nil {
 				t.Due = dt.Format("2006-01-02")
 			}
 		} else {
-			if dt, err := dueProp.DateTime(time.Local); err == nil {
+			if dt, err := dueProp.DateTime(nil); err == nil {
 				t.Due = dt.Format(time.RFC3339)
+				if loc := dt.Location(); loc != nil && loc.String() != "UTC" {
+					t.Timezone = loc.String()
+				}
 			}
 		}
 	}
 
 	// DTSTART
 	if dtsProp := comp.Props.Get(ical.PropDateTimeStart); dtsProp != nil {
-		if dt, err := dtsProp.DateTime(time.Local); err == nil {
+		if dt, err := dtsProp.DateTime(nil); err == nil {
 			t.Start = dt.Format(time.RFC3339)
+			if t.Timezone == "" {
+				if loc := dt.Location(); loc != nil && loc.String() != "UTC" {
+					t.Timezone = loc.String()
+				}
+			}
 		}
 	}
 
 	// COMPLETED
 	if cProp := comp.Props.Get(ical.PropCompleted); cProp != nil {
-		if dt, err := cProp.DateTime(time.UTC); err == nil {
-			t.Completed = dt.Format(time.RFC3339)
+		if dt, err := cProp.DateTime(nil); err == nil {
+			t.Completed = dt.UTC().Format(time.RFC3339)
 		}
 	}
 
@@ -80,6 +87,13 @@ func TodoToDTO(comp *ical.Component, href string) (*dto.Todo, error) {
 		}
 	}
 
+	// CREATED
+	if createdProp := comp.Props.Get(ical.PropCreated); createdProp != nil {
+		if dt, err := createdProp.DateTime(nil); err == nil {
+			t.Created = dt.UTC().Format(time.RFC3339)
+		}
+	}
+
 	return t, nil
 }
 
@@ -92,6 +106,18 @@ func TodoFromDTO(t *dto.Todo) (*ical.Component, error) {
 	comp.Props.SetText(ical.PropSummary, t.Summary)
 	comp.Props.SetDateTime(ical.PropDateTimeStamp, now)
 
+	// CREATED: preserve on update, set to now on first creation.
+	var created time.Time
+	if t.Created != "" {
+		if ct, err := parseDateTime(t.Created); err == nil {
+			created = ct.UTC()
+		}
+	}
+	if created.IsZero() {
+		created = now
+	}
+	comp.Props.SetDateTime(ical.PropCreated, created)
+
 	if t.Description != "" {
 		comp.Props.SetText(ical.PropDescription, t.Description)
 	}
@@ -102,16 +128,26 @@ func TodoFromDTO(t *dto.Todo) (*ical.Component, error) {
 		comp.Props.SetText(ical.PropRelatedTo, t.RelatedTo)
 	}
 
+	// Resolve named timezone once for all datetime properties.
+	var tzLoc *time.Location
+	if t.Timezone != "" {
+		if loc, err := time.LoadLocation(t.Timezone); err == nil {
+			tzLoc = loc
+		}
+	}
+
 	// DUE
 	if t.Due != "" {
 		due, err := parseDateTime(t.Due)
 		if err != nil {
 			return nil, fmt.Errorf("parsing due %q: %w", t.Due, err)
 		}
-		// Use DATE type if the string is date-only
 		if !strings.Contains(t.Due, "T") {
 			comp.Props.SetDate(ical.PropDue, due)
 		} else {
+			if tzLoc != nil {
+				due = due.In(tzLoc)
+			}
 			comp.Props.SetDateTime(ical.PropDue, due)
 		}
 	}
@@ -122,22 +158,23 @@ func TodoFromDTO(t *dto.Todo) (*ical.Component, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parsing dtstart %q: %w", t.Start, err)
 		}
+		if tzLoc != nil {
+			start = start.In(tzLoc)
+		}
 		comp.Props.SetDateTime(ical.PropDateTimeStart, start)
 	}
 
-	// COMPLETED
+	// COMPLETED — always UTC per RFC 5545 §3.8.2.1.
 	if t.Completed != "" {
 		completed, err := parseDateTime(t.Completed)
 		if err != nil {
 			return nil, fmt.Errorf("parsing completed %q: %w", t.Completed, err)
 		}
-		comp.Props.SetDateTime(ical.PropCompleted, completed)
+		comp.Props.SetDateTime(ical.PropCompleted, completed.UTC())
 	}
 
-	// PERCENT-COMPLETE
-	if t.PercentComplete > 0 {
-		comp.Props.Set(&ical.Prop{Name: ical.PropPercentComplete, Value: fmt.Sprintf("%d", t.PercentComplete)})
-	}
+	// PERCENT-COMPLETE — always written; 0 is a valid value meaning "not started".
+	comp.Props.Set(&ical.Prop{Name: ical.PropPercentComplete, Value: fmt.Sprintf("%d", t.PercentComplete)})
 
 	// PRIORITY
 	if t.Priority > 0 {
