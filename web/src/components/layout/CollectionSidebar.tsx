@@ -193,7 +193,7 @@ export function CollectionSidebar({ collections }: Props) {
                   fontWeight: 600,
                   letterSpacing: '0.08em',
                   textTransform: 'uppercase',
-                  color: 'var(--ui-text-muted)',
+                  color: 'var(--muted-foreground)',
                 }}>
                   {groupName}
                 </span>

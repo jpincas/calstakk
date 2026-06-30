@@ -4,8 +4,9 @@ import { caldav } from '@/api'
 import { collectionColor } from '@/lib/colors'
 import { parseCalDate, fmtDateShort } from '@/lib/dates'
 import { isBefore, startOfDay, isToday } from 'date-fns'
-import { Circle } from 'lucide-react'
+import { Circle, ListTodo } from 'lucide-react'
 import type { Collection, Todo } from '@/types'
+import { PageBar } from '@/components/layout/PageBar'
 
 export function TasksPage() {
   const navigate = useNavigate()
@@ -45,20 +46,11 @@ export function TasksPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: 'var(--background)' }}>
-      {/* Top bar */}
-      <div
-        style={{
-          flexShrink: 0,
-          height: 52,
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 20px',
-          background: 'var(--card)',
-          borderBottom: '1px solid var(--border)',
-        }}
-      >
-        <h1 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: 'var(--foreground)' }}>Tasks</h1>
-      </div>
+      <PageBar
+        icon={<ListTodo size={14} color="#10B981" strokeWidth={2.2} />}
+        title="Tasks"
+        detail={`${projects.length} project${projects.length !== 1 ? 's' : ''}`}
+      />
 
       {/* Card grid */}
       <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>

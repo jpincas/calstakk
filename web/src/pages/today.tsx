@@ -4,8 +4,60 @@ import { format, isToday, isBefore, startOfDay } from 'date-fns'
 import { caldav } from '@/api'
 import { collectionColor } from '@/lib/colors'
 import { parseCalDate, fmtTime, fmtDateShort } from '@/lib/dates'
-import { Circle, CheckCircle2 } from 'lucide-react'
+import { Circle, CheckCircle2, Sun } from 'lucide-react'
+import { PageBar } from '@/components/layout/PageBar'
 import type { Collection, CalEvent, Todo } from '@/types'
+
+// Colour stops: [hour, [r, g, b]]
+// Golden morning (7–9:30am) and golden evening (5:30–6:30pm) use bright amber that needs dark text.
+// A coral bridge at 17h routes the blue→golden transition through warm-red rather than muddy brown.
+const TIME_STOPS: [number, [number, number, number]][] = [
+  [0,    [15,  23,  42]],  // midnight  — deep navy
+  [4,    [30,  27,  75]],  // night     — indigo
+  [5,    [49,  46,  129]], // pre-dawn  — blue-indigo
+  [6,    [234, 88,  12]],  // dawn      — coral orange
+  [7,    [245, 158, 11]],  // morning   — golden amber (dark text)
+  [9.5,  [245, 158, 11]],  // hold      — golden through 9:30am
+  [10.5, [14,  165, 233]], // mid-morn  — sky blue
+  [13,   [2,   132, 199]], // midday    — deeper sky
+  [15,   [37,  99,  235]], // afternoon — blue
+  [17,   [210, 60,  50]],  // late arvo — warm coral-red bridge
+  [17.5, [245, 158, 11]],  // evening   — golden amber (dark text)
+  [18.5, [234, 88,  12]],  // dusk      — coral orange
+  [19.5, [139, 92,  246]], // twilight  — violet
+  [21,   [49,  46,  129]], // evening   — indigo
+  [23,   [15,  23,  42]],  // late night — deep navy
+  [24,   [15,  23,  42]],
+]
+
+function lerpRgb(a: [number,number,number], b: [number,number,number], t: number): [number,number,number] {
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * t),
+    Math.round(a[1] + (b[1] - a[1]) * t),
+    Math.round(a[2] + (b[2] - a[2]) * t),
+  ]
+}
+
+function relativeLuminance(r: number, g: number, b: number): number {
+  const ch = (c: number) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4 }
+  return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b)
+}
+
+function timeOfDayColors(date: Date | null): { bg: string; text: string } {
+  const fallback = { bg: '#71717a', text: '#fff' }
+  if (!date) return fallback
+  const h = date.getHours() + date.getMinutes() / 60
+  for (let i = 0; i < TIME_STOPS.length - 1; i++) {
+    const [t0, c0] = TIME_STOPS[i]
+    const [t1, c1] = TIME_STOPS[i + 1]
+    if (h >= t0 && h <= t1) {
+      const [r, g, b] = lerpRgb(c0, c1, (h - t0) / (t1 - t0))
+      const lum = relativeLuminance(r, g, b)
+      return { bg: `rgb(${r},${g},${b})`, text: lum > 0.179 ? '#09090b' : '#ffffff' }
+    }
+  }
+  return fallback
+}
 
 type EventMeta = CalEvent & { _colName: string; _colDisplayName: string; _colColor: string }
 type TodoMeta  = Todo      & { _colName: string; _colDisplayName: string; _colColor: string }
@@ -124,13 +176,7 @@ export function TodayPage() {
         borderRight: isNarrow ? 'none' : '1px solid var(--border)',
       }}
     >
-      <div style={{ padding: '14px 20px 10px', flexShrink: 0 }}>
-        <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ui-text-muted)' }}>
-          Tasks
-        </span>
-      </div>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 16px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 12px 16px' }}>
         {todayTodos.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8, paddingTop: 48 }}>
             <CheckCircle2 style={{ width: 20, height: 20, color: 'var(--ui-text-muted)' }} />
@@ -193,44 +239,68 @@ export function TodayPage() {
   // ── Events pane ──────────────────────────────────────────────────────────────
   const EventsPane = (
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ padding: '14px 20px 10px', flexShrink: 0 }}>
-        <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ui-text-muted)' }}>
-          Events
-        </span>
-      </div>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 16px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 12px 16px' }}>
         {todayEvents.length === 0 ? (
           <p style={{ fontSize: 12, color: 'var(--ui-text-muted)', padding: '8px 10px' }}>No events today.</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {todayEvents.map((event) => (
-              <div
-                key={event.uid}
-                style={{
-                  padding: '9px 12px',
-                  borderRadius: 8,
-                  borderLeft: `3px solid ${event._colColor}`,
-                  background: 'var(--card)',
-                  border: '1px solid var(--border)',
-                  borderLeftColor: event._colColor,
-                  borderLeftWidth: 3,
-                }}
-              >
-                <p style={{ fontSize: 13, fontWeight: 500, color: 'var(--foreground)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {event.summary}
-                </p>
-                {!event.all_day && event.start && (
-                  <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '2px 0 0' }}>
-                    {fmtTime(event.start)}{event.end ? ` — ${fmtTime(event.end)}` : ''}
-                    {event.location ? ` · ${event.location}` : ''}
-                  </p>
-                )}
-                <div style={{ marginTop: 4 }}>
+            {todayEvents.map((event) => {
+              const start = event.start ? parseCalDate(event.start) : null
+              const end   = event.end   ? parseCalDate(event.end)   : null
+              const { bg: bgColor, text: textColor } = event.all_day
+                ? { bg: '#71717a', text: '#fff' }
+                : timeOfDayColors(start)
+              const hourLabel = start && !event.all_day ? format(start, 'h') : null
+              const ampm      = start && !event.all_day ? format(start, 'a').toLowerCase() : null
+              const timeStr = !event.all_day && start
+                ? `${fmtTime(start)}${end ? ` — ${fmtTime(end)}` : ''}${event.location ? ` · ${event.location}` : ''}`
+                : event.location ?? null
+              return (
+                <div
+                  key={event.uid}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    padding: '10px 10px',
+                    borderRadius: 8,
+                    transition: 'background 100ms',
+                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--hover-bg)' }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                >
+                  {/* Time avatar */}
+                  <div style={{
+                    width: 40, height: 40, borderRadius: '50%',
+                    background: bgColor,
+                    display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0,
+                  }}>
+                    {hourLabel ? (
+                      <>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: textColor, lineHeight: 1 }}>{hourLabel}</span>
+                        <span style={{ fontSize: 8, fontWeight: 600, color: textColor, opacity: 0.7, letterSpacing: '0.04em', lineHeight: 1, marginTop: 2 }}>{ampm}</span>
+                      </>
+                    ) : (
+                      <span style={{ fontSize: 8, fontWeight: 600, color: textColor, opacity: 0.7, letterSpacing: '0.04em', textTransform: 'uppercase' }}>all day</span>
+                    )}
+                  </div>
+                  {/* Content */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontSize: 13, fontWeight: 500, color: 'var(--foreground)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {event.summary}
+                    </p>
+                    {timeStr && (
+                      <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {timeStr}
+                      </p>
+                    )}
+                  </div>
                   <CollectionBadge color={event._colColor} label={event._colDisplayName} />
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
@@ -243,28 +313,18 @@ export function TodayPage() {
       ref={containerRef}
       style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: 'var(--background)' }}
     >
-      {/* Top bar */}
-      <div
-        style={{
-          flexShrink: 0,
-          height: 52,
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 20px',
-          background: 'var(--card)',
-          borderBottom: '1px solid var(--border)',
-          gap: 10,
-        }}
-      >
-        <h1 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: 'var(--foreground)' }}>Today</h1>
-        <span style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>{todayLabel}</span>
-        <div style={{ flex: 1 }} />
-        {todayTodos.length > 0 && (
-          <span style={{ fontSize: 12, color: 'var(--ui-text-muted)' }}>
-            {todayTodos.length} task{todayTodos.length !== 1 ? 's' : ''}
-          </span>
-        )}
-      </div>
+      <PageBar
+        icon={<Sun size={14} color="#F59E0B" strokeWidth={2.2} />}
+        title="Today"
+        detail={todayLabel}
+        controls={
+          todayTodos.length > 0 ? (
+            <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
+              {todayTodos.length} task{todayTodos.length !== 1 ? 's' : ''}
+            </span>
+          ) : undefined
+        }
+      />
 
       {/* Narrow: tab switcher */}
       {isNarrow && (

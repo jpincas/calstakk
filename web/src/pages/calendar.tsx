@@ -14,7 +14,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { toast } from 'sonner'
 import { collectionColor } from '@/lib/colors'
 import { parseCalDate } from '@/lib/dates'
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, CalendarDays } from 'lucide-react'
+import { PageBar } from '@/components/layout/PageBar'
 import { useCollectionStore } from '@/state/collection'
 import type { CalEvent, Collection } from '@/types'
 
@@ -189,7 +190,20 @@ export function CalendarPage() {
     })
   }
 
-  const btnStyle = (active: boolean): React.CSSProperties => ({
+  const navBtnStyle: React.CSSProperties = {
+    padding: '4px 8px',
+    fontSize: 12,
+    fontWeight: 500,
+    background: 'transparent',
+    color: 'var(--muted-foreground)',
+    border: 'none',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    transition: 'color 100ms',
+  }
+
+  const viewBtnStyle = (active: boolean): React.CSSProperties => ({
     padding: '4px 10px',
     fontSize: 12,
     fontWeight: 500,
@@ -205,97 +219,50 @@ export function CalendarPage() {
       className="flex flex-col h-full"
       style={{ '--cal-accent': accentColor.bg } as React.CSSProperties}
     >
-      {/* Toolbar */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '10px 20px',
-          borderBottom: '1px solid var(--border)',
-          background: 'var(--background)',
-          flexShrink: 0,
-        }}
-      >
-        {/* Left: nav */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              borderRadius: 7,
-              border: '1px solid var(--border)',
-              overflow: 'hidden',
-            }}
-          >
-            <button
-              onClick={() => navigate(-1)}
-              style={{ ...btnStyle(false), padding: '4px 8px', borderRight: '1px solid rgba(255,255,255,0.08)' }}
-            >
+      <PageBar
+        icon={<CalendarDays size={14} color="#6366F1" strokeWidth={2.2} />}
+        title={viewLabel}
+        detail={
+          <div style={{ display: 'flex', alignItems: 'center', borderRadius: 7, border: '1px solid var(--border)', overflow: 'hidden' }}>
+            <button onClick={() => navigate(-1)} style={{ ...navBtnStyle, borderRight: '1px solid var(--border)' }}>
               <ChevronLeft style={{ width: 14, height: 14 }} />
             </button>
-            <button
-              onClick={() => setDate(new Date())}
-              style={{ ...btnStyle(false), padding: '4px 10px', borderRight: '1px solid rgba(255,255,255,0.08)' }}
-            >
+            <button onClick={() => setDate(new Date())} style={{ ...navBtnStyle, padding: '4px 10px', borderRight: '1px solid var(--border)' }}>
               Today
             </button>
-            <button
-              onClick={() => navigate(1)}
-              style={{ ...btnStyle(false), padding: '4px 8px' }}
-            >
+            <button onClick={() => navigate(1)} style={navBtnStyle}>
               <ChevronRight style={{ width: 14, height: 14 }} />
             </button>
           </div>
-          <h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--foreground)', margin: 0 }}>
-            {viewLabel}
-          </h2>
-        </div>
-
-        {/* Right: view picker + new event */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div
-            style={{
-              display: 'flex',
-              borderRadius: 7,
-              border: '1px solid var(--border)',
-              overflow: 'hidden',
-            }}
-          >
-            {(['month', 'week', 'day'] as View[]).map((v, i, arr) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                style={{
-                  ...btnStyle(view === v),
-                  borderRight: i < arr.length - 1 ? '1px solid rgba(255,255,255,0.08)' : 'none',
-                }}
-              >
-                {VIEW_LABELS[v]}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={() => { setForm(emptyForm(crypto.randomUUID(), defaultCol)); setIsNew(true) }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 5,
-              padding: '5px 10px',
-              borderRadius: 7,
-              border: 'none',
-              background: accentColor.bg,
-              color: '#fff',
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            <Plus style={{ width: 13, height: 13 }} />
-            New event
-          </button>
-        </div>
-      </div>
+        }
+        controls={
+          <>
+            <div style={{ display: 'flex', borderRadius: 7, border: '1px solid var(--border)', overflow: 'hidden' }}>
+              {(['month', 'week', 'day'] as View[]).map((v, i, arr) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  style={{ ...viewBtnStyle(view === v), borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}
+                >
+                  {VIEW_LABELS[v]}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => { setForm(emptyForm(crypto.randomUUID(), defaultCol)); setIsNew(true) }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '5px 10px', borderRadius: 7, border: 'none',
+                background: accentColor.bg, color: '#fff',
+                fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              <Plus style={{ width: 13, height: 13 }} />
+              New event
+            </button>
+          </>
+        }
+      />
 
       {/* Calendar */}
       <div style={{ flex: 1, padding: 16, overflow: 'hidden' }}>

@@ -17,7 +17,9 @@ import {
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
 import { Settings, Plus, CheckCircle2, Circle, AlertCircle, ChevronDown } from 'lucide-react'
+import { PageBar } from '@/components/layout/PageBar'
 import {
+  format,
   isToday,
   startOfWeek,
   endOfWeek,
@@ -64,6 +66,26 @@ const emptyTodo = (): TodoForm => ({
   description: '',
   due: '',
   status: 'NEEDS-ACTION',
+})
+
+interface EventForm {
+  uid: string
+  summary: string
+  start: string
+  end: string
+  description: string
+  location: string
+  href: string
+}
+
+const emptyEventForm = (): EventForm => ({
+  uid: crypto.randomUUID(),
+  summary: '',
+  start: '',
+  end: '',
+  description: '',
+  location: '',
+  href: '',
 })
 
 /** Convert iCal date (20260630) to HTML date input value (2026-06-30) */
@@ -218,6 +240,7 @@ export function ProjectPage() {
   const [form, setForm] = useState<TodoForm | null>(null)
   const [isNew, setIsNew] = useState(false)
   const [showCompleted, setShowCompleted] = useState(false)
+  const [eventForm, setEventForm] = useState<EventForm | null>(null)
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState('')
   const [isNarrow, setIsNarrow] = useState(false)
@@ -290,6 +313,24 @@ export function ProjectPage() {
     onError: (e) => toast.error(String(e)),
   })
 
+  const eventSave = useMutation({
+    mutationFn: (f: EventForm) =>
+      caldav.createEvent(colName!, {
+        uid: f.uid,
+        summary: f.summary,
+        start: f.start || new Date().toISOString(),
+        end: f.end || undefined,
+        description: f.description || undefined,
+        location: f.location || undefined,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['events', colName] })
+      setEventForm(null)
+      toast.success('Event created')
+    },
+    onError: (e) => toast.error(String(e)),
+  })
+
   const saveName = useMutation({
     mutationFn: (name: string) =>
       caldav.updateCollectionProps(colName!, { displayName: name }),
@@ -346,49 +387,6 @@ export function ProjectPage() {
         minWidth: 0,
       }}
     >
-      {/* Pane header */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '10px 16px',
-          borderBottom: '1px solid var(--border)',
-          flexShrink: 0,
-        }}
-      >
-        <span
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            letterSpacing: '0.08em',
-            textTransform: 'uppercase',
-            color: 'var(--muted-foreground)',
-          }}
-        >
-          Tasks
-        </span>
-        <button
-          onClick={() => { setForm(emptyTodo()); setIsNew(true) }}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 4,
-            padding: '4px 10px',
-            borderRadius: 6,
-            border: 'none',
-            background: color.bg,
-            color: '#fff',
-            fontSize: 11,
-            fontWeight: 600,
-            cursor: 'pointer',
-          }}
-        >
-          <Plus style={{ width: 11, height: 11 }} />
-          New task
-        </button>
-      </div>
-
       {/* Task list */}
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {/* Active todos */}
@@ -454,29 +452,6 @@ export function ProjectPage() {
         borderLeft: isNarrow ? 'none' : '1px solid var(--border)',
       }}
     >
-      {/* Pane header */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          padding: '10px 16px',
-          borderBottom: '1px solid var(--border)',
-          flexShrink: 0,
-        }}
-      >
-        <span
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            letterSpacing: '0.08em',
-            textTransform: 'uppercase',
-            color: 'var(--muted-foreground)',
-          }}
-        >
-          Events
-        </span>
-      </div>
-
       {/* Event list */}
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {eventBuckets.length === 0 ? (
@@ -486,9 +461,10 @@ export function ProjectPage() {
         ) : (
           eventBuckets.map(({ label, events: bucketEvents }) => (
             <div key={label}>
+              {/* Period label */}
               <div
                 style={{
-                  padding: '8px 16px 4px',
+                  padding: '12px 16px 4px',
                   fontSize: 10,
                   fontWeight: 700,
                   letterSpacing: '0.08em',
@@ -505,20 +481,43 @@ export function ProjectPage() {
                 const start = parseCalDate(event.start)
                 const end = event.end ? parseCalDate(event.end) : null
                 const timeStr = event.all_day
-                  ? null
-                  : `${fmtTime(start)}${end ? ` – ${fmtTime(end)}` : ''}`
+                  ? 'All day'
+                  : start ? `${fmtTime(start)}${end ? ` – ${fmtTime(end)}` : ''}` : null
+                const dayNum = start ? format(start, 'd') : ''
+                const monthStr = start ? format(start, 'MMM').toUpperCase() : ''
                 return (
                   <div
                     key={event.uid}
                     style={{
                       display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: 10,
-                      padding: '9px 16px',
+                      alignItems: 'center',
+                      gap: 12,
+                      padding: '10px 16px',
                       borderBottom: '1px solid var(--border)',
-                      borderLeft: `3px solid ${color.bg}`,
                     }}
                   >
+                    {/* Date avatar */}
+                    <div
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: '50%',
+                        background: 'var(--muted)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--foreground)', lineHeight: 1 }}>
+                        {dayNum}
+                      </span>
+                      <span style={{ fontSize: 8, fontWeight: 600, color: 'var(--muted-foreground)', letterSpacing: '0.04em', lineHeight: 1, marginTop: 2 }}>
+                        {monthStr}
+                      </span>
+                    </div>
+                    {/* Content */}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p
                         style={{
@@ -674,32 +673,10 @@ export function ProjectPage() {
         overflow: 'hidden',
       }}
     >
-      {/* Top bar */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          height: 52,
-          flexShrink: 0,
-          padding: '0 20px',
-          background: 'var(--card)',
-          borderBottom: '1px solid var(--border)',
-          gap: 12,
-        }}
-      >
-        {/* Left: dot + name */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: '50%',
-              background: color.bg,
-              display: 'inline-block',
-              flexShrink: 0,
-            }}
-          />
-          {editingName ? (
+      <PageBar
+        accentColor={color.bg}
+        title={
+          editingName ? (
             <input
               autoFocus
               value={nameInput}
@@ -710,11 +687,11 @@ export function ProjectPage() {
                 if (e.key === 'Escape') setEditingName(false)
               }}
               style={{
-                fontSize: 14,
-                fontWeight: 600,
-                color: 'var(--foreground)',
-                background: 'var(--accent)',
-                border: '1px solid var(--border)',
+                fontSize: 15,
+                fontWeight: 700,
+                color: '#fff',
+                background: 'rgba(255,255,255,0.15)',
+                border: '1px solid rgba(255,255,255,0.4)',
                 borderRadius: 4,
                 padding: '2px 6px',
                 outline: 'none',
@@ -724,48 +701,56 @@ export function ProjectPage() {
           ) : (
             <span
               onClick={() => { setNameInput(displayName); setEditingName(true) }}
-              style={{
-                fontSize: 14,
-                fontWeight: 600,
-                color: 'var(--foreground)',
-                cursor: 'text',
-              }}
+              style={{ cursor: 'text', color: 'inherit' }}
             >
               {displayName}
             </span>
-          )}
-        </div>
-
-        {/* Centre: counts */}
-        <div style={{ flex: 1, textAlign: 'center' }}>
-          <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
-            {active.length} active · {completed.length} completed
-          </span>
-        </div>
-
-        {/* Right: settings */}
-        <button
-          onClick={() => setSettingsOpen(true)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 28,
-            height: 28,
-            borderRadius: 6,
-            border: '1px solid var(--border)',
-            background: 'transparent',
-            color: 'var(--muted-foreground)',
-            cursor: 'pointer',
-            flexShrink: 0,
-            transition: 'background 100ms',
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--hover-bg)')}
-          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-        >
-          <Settings style={{ width: 14, height: 14 }} />
-        </button>
-      </div>
+          )
+        }
+        detail={`${active.length} active · ${completed.length} completed`}
+        controls={
+          <>
+            <button
+              onClick={() => setSettingsOpen(true)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 28, height: 28, borderRadius: 6,
+                border: '1px solid rgba(255,255,255,0.35)',
+                background: 'transparent', color: 'rgba(255,255,255,0.85)',
+                cursor: 'pointer',
+              }}
+            >
+              <Settings style={{ width: 14, height: 14 }} />
+            </button>
+            <button
+              onClick={() => setEventForm(emptyEventForm())}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '5px 10px', borderRadius: 7,
+                border: '1px solid rgba(255,255,255,0.35)',
+                background: 'rgba(255,255,255,0.15)', color: '#fff',
+                fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              <Plus style={{ width: 13, height: 13 }} />
+              New event
+            </button>
+            <button
+              onClick={() => { setForm(emptyTodo()); setIsNew(true) }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '5px 10px', borderRadius: 7,
+                border: '1px solid rgba(255,255,255,0.35)',
+                background: 'rgba(255,255,255,0.15)', color: '#fff',
+                fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              <Plus style={{ width: 13, height: 13 }} />
+              New task
+            </button>
+          </>
+        }
+      />
 
       {/* Narrow mode tab bar */}
       {isNarrow && (
@@ -878,6 +863,36 @@ export function ProjectPage() {
               style={{ background: color.bg, color: '#fff', border: 'none' }}
             >
               Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* New event modal */}
+      <Dialog open={!!eventForm} onOpenChange={(o) => !o && setEventForm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New event</DialogTitle>
+          </DialogHeader>
+          {eventForm && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 4 }}>
+              <div><Label>Title</Label><Input autoFocus value={eventForm.summary} onChange={(e) => setEventForm({ ...eventForm, summary: e.target.value })} /></div>
+              <div>
+                <Label>Start <span style={{ fontWeight: 400, color: 'var(--muted-foreground)' }}>(ISO 8601)</span></Label>
+                <Input value={eventForm.start} onChange={(e) => setEventForm({ ...eventForm, start: e.target.value })} placeholder="2026-07-01T09:00:00Z" />
+              </div>
+              <div><Label>End</Label><Input value={eventForm.end} onChange={(e) => setEventForm({ ...eventForm, end: e.target.value })} /></div>
+              <div><Label>Location</Label><Input value={eventForm.location} onChange={(e) => setEventForm({ ...eventForm, location: e.target.value })} /></div>
+              <div><Label>Description</Label><Input value={eventForm.description} onChange={(e) => setEventForm({ ...eventForm, description: e.target.value })} /></div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              onClick={() => eventSave.mutate(eventForm!)}
+              disabled={eventSave.isPending || !eventForm?.summary}
+              style={{ background: color.bg, color: '#fff', border: 'none' }}
+            >
+              Create event
             </Button>
           </DialogFooter>
         </DialogContent>

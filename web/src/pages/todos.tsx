@@ -1,46 +1,22 @@
 import { useState } from 'react'
+import { isBefore, isToday, startOfDay } from 'date-fns'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, useLocation } from 'react-router-dom'
 import { caldav } from '@/api'
 import { collectionColor } from '@/lib/colors'
-import { fmtDate, isOverdue } from '@/lib/dates'
+import { parseCalDate, fmtDateShort } from '@/lib/dates'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { Plus, CheckCircle2, Circle, AlertCircle, ChevronDown } from 'lucide-react'
+import { Plus, CheckCircle2, Circle, ChevronDown, Inbox } from 'lucide-react'
+import { PageBar } from '@/components/layout/PageBar'
 import type { Collection, Todo } from '@/types'
 
 interface TodoForm { uid: string; summary: string; description: string; due: string; status: string }
 const empty = (uid = ''): TodoForm => ({ uid, summary: '', description: '', due: '', status: 'NEEDS-ACTION' })
 
-const STATUS_CONFIG = {
-  'NEEDS-ACTION': { label: 'To do',       color: 'var(--muted-foreground)', bg: 'var(--accent)'  },
-  'IN-PROCESS':   { label: 'In progress', color: '#F59E0B',                  bg: 'rgba(245,158,11,0.12)' },
-  'COMPLETED':    { label: 'Done',        color: '#10B981',                  bg: 'rgba(16,185,129,0.12)' },
-  'CANCELLED':    { label: 'Cancelled',   color: 'var(--ui-text-muted)',     bg: 'var(--muted)'   },
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const cfg = STATUS_CONFIG[status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG['NEEDS-ACTION']
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        padding: '2px 8px',
-        borderRadius: 20,
-        fontSize: 10,
-        fontWeight: 600,
-        background: cfg.bg,
-        color: cfg.color,
-      }}
-    >
-      {cfg.label}
-    </span>
-  )
-}
 
 export function TodosPage() {
   const { collection: collectionParam } = useParams<{ collection?: string }>()
@@ -120,20 +96,21 @@ export function TodosPage() {
     })
   const completed = todos.filter((t) => t.status === 'COMPLETED')
 
-  const displayName = collections.find((c: Collection) => c.name === collection)?.display_name ?? collection ?? 'Tasks'
 
   const TodoRow = ({ todo }: { todo: Todo }) => {
     const done = todo.status === 'COMPLETED'
-    const overdue = !done && isOverdue(todo.due)
+    const due = todo.due ? parseCalDate(todo.due) : null
+    const now = new Date()
+    const overdue = !done && !!due && isBefore(due, startOfDay(now)) && !isToday(due)
+    const dueToday = !!due && isToday(due)
     return (
       <div
-        className="group"
         style={{
           display: 'flex',
           alignItems: 'flex-start',
           gap: 10,
-          padding: '10px 16px',
-          borderBottom: '1px solid var(--border)',
+          padding: '9px 10px',
+          borderRadius: 8,
           cursor: 'pointer',
           transition: 'background 100ms',
         }}
@@ -145,17 +122,13 @@ export function TodosPage() {
         }}
       >
         <button
-          style={{ flexShrink: 0, marginTop: 1, background: 'none', border: 'none', cursor: 'pointer', padding: 0, transition: 'opacity 100ms' }}
-          onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
-          onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+          style={{ flexShrink: 0, marginTop: 1, background: 'none', border: 'none', cursor: 'pointer', padding: 0, opacity: toggle.isPending ? 0.5 : 1 }}
           onClick={(e) => { e.stopPropagation(); toggle.mutate(todo) }}
         >
           {done ? (
             <CheckCircle2 style={{ width: 16, height: 16, color: '#10B981' }} />
-          ) : overdue ? (
-            <AlertCircle style={{ width: 16, height: 16, color: 'var(--destructive)' }} />
           ) : (
-            <Circle style={{ width: 16, height: 16, color: color.bg }} />
+            <Circle style={{ width: 16, height: 16, color: overdue ? 'var(--destructive)' : color.bg }} />
           )}
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -174,21 +147,16 @@ export function TodosPage() {
             </p>
           )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-          {todo.due && (
-            <span style={{
-              fontSize: 11,
-              fontWeight: 500,
-              padding: '2px 7px',
-              borderRadius: 20,
-              background: overdue ? 'rgba(227,94,94,0.12)' : 'var(--accent)',
-              color: overdue ? 'var(--destructive)' : 'var(--muted-foreground)',
-            }}>
-              {fmtDate(todo.due)}
-            </span>
-          )}
-          {todo.status && <StatusBadge status={todo.status} />}
-        </div>
+        {due && (
+          <span style={{
+            fontSize: 11,
+            fontWeight: 500,
+            flexShrink: 0,
+            color: overdue ? 'var(--destructive)' : dueToday ? '#F59E0B' : 'var(--muted-foreground)',
+          }}>
+            {fmtDateShort(due)}
+          </span>
+        )}
       </div>
     )
   }
@@ -202,62 +170,48 @@ export function TodosPage() {
   }
 
   return (
-    <div style={{ padding: '28px 32px', maxWidth: 640, margin: '0 auto' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ width: 9, height: 9, borderRadius: '50%', background: color.bg, display: 'inline-block', flexShrink: 0 }} />
-            <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--foreground)', margin: 0 }}>
-              {displayName}
-            </h1>
-          </div>
-          <p style={{ fontSize: 12, color: 'var(--muted-foreground)', margin: '4px 0 0 17px' }}>
-            {active.length} active · {completed.length} completed
-          </p>
-        </div>
-        <button
-          onClick={() => { setForm(empty(crypto.randomUUID())); setIsNew(true) }}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 5,
-            padding: '6px 12px',
-            borderRadius: 8,
-            border: 'none',
-            background: color.bg,
-            color: '#fff',
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: 'pointer',
-          }}
-        >
-          <Plus style={{ width: 13, height: 13 }} />
-          New task
-        </button>
-      </div>
-
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      <PageBar
+        icon={<Inbox size={14} color="#3B82F6" strokeWidth={2.2} />}
+        title="Inbox"
+        detail={`${active.length} active · ${completed.length} completed`}
+        controls={
+          <button
+            onClick={() => { setForm(empty(crypto.randomUUID())); setIsNew(true) }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '5px 10px', borderRadius: 7, border: 'none',
+              background: '#3B82F6', color: '#fff',
+              fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            }}
+          >
+            <Plus style={{ width: 13, height: 13 }} />
+            New task
+          </button>
+        }
+      />
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px' }}>
       {isLoading ? (
-        <div className="cs-card rounded-xl" style={{ padding: '32px', textAlign: 'center', color: 'var(--ui-text-muted)', fontSize: 13 }}>
+        <div style={{ padding: '32px', textAlign: 'center', color: 'var(--ui-text-muted)', fontSize: 13 }}>
           Loading…
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
           {/* Active tasks */}
-          <div className="cs-card" style={{ borderRadius: 10, overflow: 'hidden' }}>
-            {active.length === 0 ? (
-              <div style={{ padding: '32px', textAlign: 'center' }}>
-                <CheckCircle2 style={{ width: 24, height: 24, color: 'var(--border)', margin: '0 auto 8px' }} />
-                <p style={{ fontSize: 13, color: 'var(--ui-text-muted)', margin: 0 }}>All caught up.</p>
-              </div>
-            ) : (
-              active.map((todo) => <TodoRow key={todo.uid} todo={todo} />)
-            )}
-          </div>
+          {active.length === 0 ? (
+            <div style={{ padding: '32px', textAlign: 'center' }}>
+              <CheckCircle2 style={{ width: 24, height: 24, color: 'var(--border)', margin: '0 auto 8px' }} />
+              <p style={{ fontSize: 13, color: 'var(--ui-text-muted)', margin: 0 }}>All caught up.</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 0' }}>
+              {active.map((todo) => <TodoRow key={todo.uid} todo={todo} />)}
+            </div>
+          )}
 
           {/* Completed */}
           {completed.length > 0 && (
-            <div className="cs-card" style={{ borderRadius: 10, overflow: 'hidden' }}>
+            <div style={{ marginTop: 8 }}>
               <button
                 onClick={() => setShowCompleted((v) => !v)}
                 style={{
@@ -265,7 +219,8 @@ export function TodosPage() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
-                  padding: '10px 16px',
+                  padding: '8px 10px',
+                  borderRadius: 8,
                   background: 'none',
                   border: 'none',
                   cursor: 'pointer',
@@ -290,7 +245,11 @@ export function TodosPage() {
                   }}
                 />
               </button>
-              {showCompleted && completed.map((todo) => <TodoRow key={todo.uid} todo={todo} />)}
+              {showCompleted && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '2px 0' }}>
+                  {completed.map((todo) => <TodoRow key={todo.uid} todo={todo} />)}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -331,6 +290,7 @@ export function TodosPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   )
 }
