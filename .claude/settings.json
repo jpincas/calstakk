@@ -24,46 +24,17 @@
       "Bash(kill:*)",
       "Bash(ss:*)",
 
-      "Bash(make check)",
-      "Bash(make check-fast)",
-      "Bash(make check-race)",
-      "Bash(make iterate)",
-      "Bash(make build)",
-      "Bash(make test)",
-      "Bash(make lint)",
-      "Bash(make generate)",
-      "Bash(make gen-check)",
-      "Bash(make tidy-check)",
-      "Bash(make schema-apply)",
-      "Bash(make schema-diff)",
-      "Bash(make seed-demo)",
-      "Bash(make db-reset)",
-      "Bash(make stop)",
-      "Bash(make run)",
+      "Bash(~/.deno/bin/deno check:*)",
+      "Bash(~/.deno/bin/deno test:*)",
+      "Bash(~/.deno/bin/deno lint:*)",
+      "Bash(~/.deno/bin/deno run:*)",
+      "Bash(~/.deno/bin/deno fmt:*)",
+      "Bash(~/.deno/bin/deno cache:*)",
 
       "Bash(make web-install)",
       "Bash(make web-typecheck)",
       "Bash(make web-lint)",
       "Bash(make web-build)",
-
-      "Bash(go build:*)",
-      "Bash(go test:*)",
-      "Bash(go vet:*)",
-      "Bash(go run:*)",
-      "Bash(go mod tidy)",
-
-      "Bash(sqlc generate)",
-      "Bash(sqlc verify)",
-      "Bash(tygo generate)",
-
-      "Bash(atlas schema diff:*)",
-      "Bash(atlas schema apply:*)",
-      "Bash(atlas migrate apply:*)",
-      "Bash(atlas migrate status:*)",
-
-      "Bash(golangci-lint run:*)",
-      "Bash(gofmt:*)",
-      "Bash(goimports:*)",
 
       "Bash(npm install:*)",
       "Bash(npm ci:*)",
@@ -103,7 +74,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "make check-fast"
+            "command": "~/.deno/bin/deno check src/ tests/ 2>&1 | tail -5"
           }
         ]
       }
