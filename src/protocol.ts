@@ -774,7 +774,7 @@ function principalProps(user: User): PropMap {
   const op = outboxPath(user.username);
   const defaultCal = collectionPath(user.username, DEFAULT_CALENDAR_NAME);
   m.set(makeKey("DAV:", "resourcetype"), D("resourcetype", D("collection") + D("principal")));
-  m.set(makeKey("DAV:", "displayname"), D("displayname", user.displayName));
+  m.set(makeKey("DAV:", "displayname"), D("displayname", esc(user.displayName)));
   m.set(makeKey("DAV:", "current-user-principal"), D("current-user-principal", D("href", pp)));
   m.set(makeKey("urn:ietf:params:xml:ns:caldav", "calendar-home-set"), C("calendar-home-set", D("href", chp)));
   m.set(makeKey("DAV:", "creationdate"), D("creationdate", new Date().toISOString()));
@@ -1019,7 +1019,7 @@ function collectionProps(
   const m = new Map<string, string>();
   const pp = principalPath(username);
   m.set(makeKey("DAV:", "resourcetype"), D("resourcetype", D("collection") + C("calendar")));
-  m.set(makeKey("DAV:", "displayname"), D("displayname", displayName || name));
+  m.set(makeKey("DAV:", "displayname"), D("displayname", esc(displayName || name)));
   m.set(makeKey("DAV:", "current-user-principal"), D("current-user-principal", D("href", pp)));
   m.set(makeKey("DAV:", "sync-token"), D("sync-token", wrapSyncToken(syncToken)));
   m.set(makeKey("DAV:", "creationdate"), D("creationdate", new Date().toISOString()));

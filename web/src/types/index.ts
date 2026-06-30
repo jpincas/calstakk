@@ -5,6 +5,7 @@ export interface Collection {
   color?: string
   description?: string
   order?: number
+  group?: string
 }
 
 export interface CalEvent {
@@ -35,4 +36,4 @@ export interface Todo {
 }
 
 export type DataType = 'calendar' | 'todos'
-export type ViewMode = 'inbox' | 'today' | 'todos' | 'calendar' | 'split'
+export type ViewMode = 'inbox' | 'today' | 'tasks' | 'calendar'

@@ -4,7 +4,6 @@ import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { caldav } from '@/api'
 import { useCollectionStore } from '@/state/collection'
 import { CollectionSidebar } from './CollectionSidebar'
-import { TopNav } from './TopNav'
 
 export function AppShell() {
   const qc = useQueryClient()
@@ -69,17 +68,11 @@ export function AppShell() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--background)' }}>
-      {/* Top nav bar */}
-      <TopNav />
-
-      {/* Body: sidebar + content */}
-      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        <CollectionSidebar collections={collections ?? []} />
-        <main style={{ flex: 1, minWidth: 0, overflow: 'auto' }}>
-          <Outlet />
-        </main>
-      </div>
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--background)' }}>
+      <CollectionSidebar collections={collections ?? []} />
+      <main style={{ flex: 1, minWidth: 0, overflow: 'auto' }}>
+        <Outlet />
+      </main>
     </div>
   )
 }

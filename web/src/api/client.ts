@@ -5,7 +5,7 @@ import {
   propfind, report,
   nsText, nsHref, extractCalendarData,
   calQueryBody, syncCollectionBody,
-  DAV_NS, CALDAV_NS, APPLE_NS,
+  DAV_NS, CALDAV_NS, APPLE_NS, CS_NS,
 } from './xml'
 
 export { CalDAVError }
@@ -54,13 +54,14 @@ export class CalDAVClient {
   async listCollections(): Promise<Collection[]> {
     const home = await this.discover()
     const body = `<?xml version="1.0" encoding="UTF-8"?>
-<d:propfind xmlns:d="DAV:" xmlns:c="${CALDAV_NS}" xmlns:a="${APPLE_NS}">
+<d:propfind xmlns:d="DAV:" xmlns:c="${CALDAV_NS}" xmlns:a="${APPLE_NS}" xmlns:cs="${CS_NS}">
   <d:prop>
     <d:displayname/>
     <d:resourcetype/>
     <c:calendar-description/>
     <a:calendar-color/>
     <a:calendar-order/>
+    <cs:group/>
   </d:prop>
 </d:propfind>`
     const doc = await propfind(home, '1', body, this.headers())
@@ -81,8 +82,9 @@ export class CalDAVClient {
       const description = nsText(resp, CALDAV_NS, 'calendar-description') || undefined
       const orderStr = nsText(resp, APPLE_NS, 'calendar-order')
       const order = orderStr ? parseInt(orderStr) : undefined
+      const group = nsText(resp, CS_NS, 'group') || undefined
 
-      collections.push({ name, display_name: displayName || name, href, color, description, order })
+      collections.push({ name, display_name: displayName || name, href, color, description, order, group })
     }
 
     return collections
@@ -92,13 +94,14 @@ export class CalDAVClient {
     const home = await this.discover()
     const path = `${home}/${name}`
     const body = `<?xml version="1.0" encoding="UTF-8"?>
-<d:propfind xmlns:d="DAV:" xmlns:c="${CALDAV_NS}" xmlns:a="${APPLE_NS}">
+<d:propfind xmlns:d="DAV:" xmlns:c="${CALDAV_NS}" xmlns:a="${APPLE_NS}" xmlns:cs="${CS_NS}">
   <d:prop>
     <d:displayname/>
     <d:resourcetype/>
     <c:calendar-description/>
     <a:calendar-color/>
     <a:calendar-order/>
+    <cs:group/>
   </d:prop>
 </d:propfind>`
     const doc = await propfind(path, '0', body, this.headers())
@@ -109,7 +112,8 @@ export class CalDAVClient {
     const description = nsText(resp, CALDAV_NS, 'calendar-description') || undefined
     const orderStr = nsText(resp, APPLE_NS, 'calendar-order')
     const order = orderStr ? parseInt(orderStr) : undefined
-    return { name, display_name: displayName || name, href: path, color, description, order }
+    const group = nsText(resp, CS_NS, 'group') || undefined
+    return { name, display_name: displayName || name, href: path, color, description, order, group }
   }
 
   async createCollection(
@@ -142,22 +146,30 @@ export class CalDAVClient {
 
   async updateCollectionProps(
     name: string,
-    props: { displayName?: string; color?: string; description?: string },
+    props: { displayName?: string; color?: string; description?: string; group?: string | null },
   ): Promise<void> {
     const home = await this.discover()
     const path = `${home}/${name}`
     const sets: string[] = []
+    const removes: string[] = []
     if (props.displayName !== undefined)
       sets.push(`<d:displayname>${escXml(props.displayName)}</d:displayname>`)
     if (props.color !== undefined)
       sets.push(`<a:calendar-color xmlns:a="${APPLE_NS}">${escXml(props.color)}</a:calendar-color>`)
     if (props.description !== undefined)
       sets.push(`<c:calendar-description xmlns:c="${CALDAV_NS}">${escXml(props.description)}</c:calendar-description>`)
-    if (sets.length === 0) return
+    if (props.group === null) {
+      removes.push(`<cs:group xmlns:cs="${CS_NS}"/>`)
+    } else if (props.group !== undefined) {
+      sets.push(`<cs:group xmlns:cs="${CS_NS}">${escXml(props.group)}</cs:group>`)
+    }
+    if (sets.length === 0 && removes.length === 0) return
 
+    const setPart = sets.length > 0 ? `<d:set><d:prop>${sets.join('')}</d:prop></d:set>` : ''
+    const removePart = removes.length > 0 ? `<d:remove><d:prop>${removes.join('')}</d:prop></d:remove>` : ''
     const body = `<?xml version="1.0" encoding="UTF-8"?>
 <d:propertyupdate xmlns:d="DAV:" xmlns:c="${CALDAV_NS}" xmlns:a="${APPLE_NS}">
-  <d:set><d:prop>${sets.join('')}</d:prop></d:set>
+  ${setPart}${removePart}
 </d:propertyupdate>`
     const res = await fetch(path, {
       method: 'PROPPATCH',

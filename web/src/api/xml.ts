@@ -5,6 +5,7 @@ import { CalDAVError } from './types'
 export const DAV_NS = 'DAV:'
 export const CALDAV_NS = 'urn:ietf:params:xml:ns:caldav'
 export const APPLE_NS = 'http://apple.com/ns/ical/'
+export const CS_NS = 'https://calstakk.dev/ns/'
 
 export async function propfind(
   path: string,

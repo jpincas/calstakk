@@ -869,6 +869,38 @@ Deno.test("RFC 4918 §15.2 displayname present in allprop and settable via PROPP
   });
 });
 
+Deno.test("RFC 4918 §15.2 displayname with XML special characters is returned as well-formed XML", async () => {
+  await withServer(async (s) => {
+    await s.mkcol("esc-col");
+
+    // Set a displayname containing all XML special characters: &, <, >, "
+    const specialName = 'Health & Fitness <Pro> "Edition"';
+    const ppBody =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<D:propertyupdate xmlns:D="DAV:">' +
+      `<D:set><D:prop><D:displayname>${specialName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")}</D:displayname></D:prop></D:set>` +
+      "</D:propertyupdate>";
+    const ppResp = await s.do("PROPPATCH", collectionPath("esc-col"), xmlContentType(), ppBody);
+    assertEquals(ppResp.status, 207, "PROPPATCH should succeed");
+
+    // PROPFIND: the response must be parseable XML (not break on &) and return the exact value.
+    const pfResp = await s.do(
+      "PROPFIND",
+      collectionPath("esc-col"),
+      withHeaders(depthHeader("0"), xmlContentType()),
+      propfindProps(nsDAV, "displayname"),
+    );
+    assertEquals(pfResp.status, 207);
+    const ms = parseMultistatus(pfResp.body);
+    const r = ms.response(collectionPath("esc-col"));
+    assertEquals(r !== undefined, true);
+    const dn = r!.prop("displayname");
+    assertEquals(dn !== undefined, true);
+    assertEquals(dn!.status, 200);
+    assertEquals(dn!.text(), specialName, "displayname must round-trip through XML escaping");
+  });
+});
+
 // ─── §15.4 getcontentlength correctness ──────────────────────────────────────
 
 Deno.test("RFC 4918 §15.4 getcontentlength value matches actual byte length of GET response body", async () => {
