@@ -51,8 +51,8 @@ const handler = async (req: Request): Promise<Response> => {
 };
 
 console.log(`CalStakk listening on http://${host}:${port}`);
-console.log(`  Principal:     http://${host}:${port}/calstakk`);
-console.log(`  Calendar home: http://${host}:${port}/calstakk/calendars`);
+console.log(`  Principal:     http://${host}:${port}/principals/${config.user.username}`);
+console.log(`  Calendar home: http://${host}:${port}/calendars/${config.user.username}`);
 console.log(`  Web UI:        http://${host}:${port}/app/${webDir ? "" : "(disabled — set CALSTAKK_WEB_DIR)"}`);
 if (config.user.password) {
   console.log(`  Auth:          ${config.user.username} / (password set)`);

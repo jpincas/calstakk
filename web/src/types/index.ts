@@ -2,6 +2,9 @@ export interface Collection {
   name: string
   display_name: string
   href: string
+  color?: string
+  description?: string
+  order?: number
 }
 
 export interface CalEvent {

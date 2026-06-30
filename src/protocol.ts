@@ -93,21 +93,26 @@ const ALLOW_HEADER =
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 async function authenticate(req: Request, storage: Storage, config: Config): Promise<User | Response> {
-  const creds = parseBasicAuth(req.headers.get("Authorization"));
-  if (!creds) return unauthorized();
-
-  // Bootstrap owner on first request if not yet in storage
+  // Bootstrap owner on first request if not yet in storage.
   const ownerInStore = await storage.getUser(config.user.username);
-  if (!ownerInStore && config.user.password) {
+  if (!ownerInStore) {
     await storage.createUser({
       username: config.user.username,
-      passwordHash: await hashPassword(config.user.password),
+      passwordHash: config.user.password ? await hashPassword(config.user.password) : "",
       displayName: config.user.displayName,
       email: config.user.email,
       timezone: config.user.timezone,
       isAdmin: true,
     });
   }
+
+  // No password configured — auth disabled, treat every request as the owner.
+  if (!config.user.password) {
+    return (await storage.getUser(config.user.username))!;
+  }
+
+  const creds = parseBasicAuth(req.headers.get("Authorization"));
+  if (!creds) return unauthorized();
 
   const user = await storage.getUser(creds.username);
   if (!user) return unauthorized();
