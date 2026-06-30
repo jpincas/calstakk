@@ -196,17 +196,17 @@ export function validateCalendarObject(cal: ICalComponent): ValidationError | nu
     }
   }
 
-  // Count component types (VEVENT, VTODO, and VAVAILABILITY supported)
+  // Count component types (VEVENT, VTODO, VAVAILABILITY, and VFREEBUSY supported)
   const vevents = getComps(cal, "VEVENT");
   const vtodos = getComps(cal, "VTODO");
   const vavails = getComps(cal, "VAVAILABILITY");
-  const total = vevents.length + vtodos.length + vavails.length;
+  const vfreebusy = getComps(cal, "VFREEBUSY");
+  const total = vevents.length + vtodos.length + vavails.length + vfreebusy.length;
 
   if (total === 0) {
     // Check for unsupported types like VJOURNAL
-    const others = cal.children.filter(
-      (c) => !["VTIMEZONE", "VEVENT", "VTODO", "VAVAILABILITY"].includes(c.name),
-    );
+    const SUPPORTED = ["VTIMEZONE", "VEVENT", "VTODO", "VAVAILABILITY", "VFREEBUSY"];
+    const others = cal.children.filter((c) => !SUPPORTED.includes(c.name));
     if (others.length > 0) {
       return {
         code: 403,
@@ -214,7 +214,21 @@ export function validateCalendarObject(cal: ICalComponent): ValidationError | nu
         message: `Unsupported component type: ${others[0].name}`,
       };
     }
-    return { code: 400, precondition: "valid-calendar-data", message: "No VEVENT, VTODO, or VAVAILABILITY found" };
+    return { code: 400, precondition: "valid-calendar-data", message: "No VEVENT, VTODO, VAVAILABILITY, or VFREEBUSY found" };
+  }
+
+  // VFREEBUSY: minimal validation — require UID and DTSTAMP
+  for (const comp of vfreebusy) {
+    if (!getProp(comp, "UID")) {
+      return { code: 400, precondition: "valid-calendar-data", message: "VFREEBUSY UID is required" };
+    }
+    if (!getProp(comp, "DTSTAMP")) {
+      return { code: 400, precondition: "valid-calendar-data", message: "VFREEBUSY DTSTAMP is required" };
+    }
+    // Skip further VEVENT/VTODO validation below
+  }
+  if (vfreebusy.length > 0 && vevents.length === 0 && vtodos.length === 0 && vavails.length === 0) {
+    return null; // pure VFREEBUSY object — no further validation needed
   }
 
   // VAVAILABILITY validation (RFC 7953 §3.1)
@@ -728,17 +742,18 @@ function getPropDate(comp: ICalComponent, name: string): Date | null {
 
 // ─── In-process filtering ─────────────────────────────────────────────────────
 
-/** Returns true if the ics string matches the CalDAV comp-filter tree. */
-export function matchesFilter(ics: string, filter: CompFilter): boolean {
+/** Returns true if the ics string matches the CalDAV comp-filter tree.
+ *  tzOffsetMs: UTC offset in ms of the collection timezone used to interpret floating times. */
+export function matchesFilter(ics: string, filter: CompFilter, tzOffsetMs = 0): boolean {
   try {
     const cal = parseICS(ics);
-    return matchComp(filter, cal);
+    return matchComp(filter, cal, tzOffsetMs);
   } catch {
     return false;
   }
 }
 
-function matchComp(filter: CompFilter, comp: ICalComponent): boolean {
+function matchComp(filter: CompFilter, comp: ICalComponent, tzOffsetMs: number): boolean {
   // The comp must match by name (case-insensitive)
   if (comp.name !== filter.name.toUpperCase()) {
     return filter.isNotDefined;
@@ -746,12 +761,12 @@ function matchComp(filter: CompFilter, comp: ICalComponent): boolean {
 
   // time-range on the comp itself
   if (filter.start || filter.end) {
-    if (!matchCompTimeRange(filter.start, filter.end, comp)) return false;
+    if (!matchCompTimeRange(filter.start, filter.end, comp, tzOffsetMs)) return false;
   }
 
   // All nested comp-filters must match at least one child
   for (const cf of filter.comps) {
-    if (!matchCompFilter(cf, comp)) return false;
+    if (!matchCompFilter(cf, comp, tzOffsetMs)) return false;
   }
 
   // All prop-filters must match
@@ -762,13 +777,65 @@ function matchComp(filter: CompFilter, comp: ICalComponent): boolean {
   return true;
 }
 
-function matchCompFilter(filter: CompFilter, parent: ICalComponent): boolean {
+function matchCompFilter(filter: CompFilter, parent: ICalComponent, tzOffsetMs: number): boolean {
   const children = parent.children.filter((c) => c.name === filter.name.toUpperCase());
   if (children.length === 0) return filter.isNotDefined;
   if (filter.isNotDefined) return false; // component IS defined → is-not-defined fails
 
   for (const child of children) {
-    if (matchComp(filter, child)) return true;
+    if (matchComp(filter, child, tzOffsetMs)) return true;
+  }
+  return false;
+}
+
+// Parse a TZOFFSETTO/TZOFFSETFROM string (+HHMM or -HHMM) to milliseconds.
+function parseTzOffsetStr(s: string): number {
+  const sign = s[0] === "-" ? -1 : 1;
+  const h = parseInt(s.slice(1, 3), 10);
+  const m = parseInt(s.slice(3, 5), 10);
+  return sign * (h * 60 + m) * 60 * 1000;
+}
+
+// Extract UTC offset in ms from a raw VTIMEZONE ICS string (uses first TZOFFSETTO found).
+export function extractTzOffsetFromVTZ(tzICS: string): number {
+  const m = tzICS.match(/TZOFFSETTO:([+-]\d{4})/);
+  return m ? parseTzOffsetStr(m[1]) : 0;
+}
+
+// Check if RRULE occurrences of an event overlap the given range (basic FREQ expansion).
+function hasRecurrenceInRange(
+  dtStart: Date,
+  rruleStr: string,
+  rangeStart: Date,
+  rangeEnd: Date,
+  durationMs: number,
+): boolean {
+  const params: Record<string, string> = {};
+  for (const part of rruleStr.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq >= 0) params[part.slice(0, eq).toUpperCase()] = part.slice(eq + 1);
+  }
+
+  const freq = params["FREQ"]?.toUpperCase();
+  const interval = params["INTERVAL"] ? parseInt(params["INTERVAL"], 10) : 1;
+  const maxCount = params["COUNT"] ? parseInt(params["COUNT"], 10) : 500;
+
+  let stepMs: number;
+  switch (freq) {
+    case "DAILY": stepMs = 86400000 * interval; break;
+    case "WEEKLY": stepMs = 7 * 86400000 * interval; break;
+    case "MONTHLY": stepMs = 30 * 86400000 * interval; break; // approximate
+    case "YEARLY": stepMs = 365 * 86400000 * interval; break; // approximate
+    default: return false;
+  }
+
+  let cur = dtStart.getTime();
+  for (let n = 0; n < maxCount; n++) {
+    const occStart = cur;
+    if (occStart >= rangeEnd.getTime()) break; // past query range
+    const occEnd = occStart + durationMs;
+    if (occEnd > rangeStart.getTime()) return true; // overlaps
+    cur += stepMs;
   }
   return false;
 }
@@ -777,6 +844,7 @@ function matchCompTimeRange(
   start: Date | undefined,
   end: Date | undefined,
   comp: ICalComponent,
+  tzOffsetMs: number,
 ): boolean {
   const rangeStart = start ?? new Date(0);
   const rangeEnd = end ?? new Date(8.64e15);
@@ -785,23 +853,56 @@ function matchCompTimeRange(
   if (comp.name === "VAVAILABILITY") {
     const dtStart = getPropDate(comp, "DTSTART");
     const dtEnd = getPropDate(comp, "DTEND");
-    const windowStart = dtStart ?? new Date(0);   // unbounded left
-    const windowEnd = dtEnd ?? new Date(8.64e15); // unbounded right
+    const windowStart = dtStart ?? new Date(0);
+    const windowEnd = dtEnd ?? new Date(8.64e15);
     return windowStart < rangeEnd && windowEnd > rangeStart;
   }
 
-  const dtStart = getPropDate(comp, "DTSTART");
-  let dtEnd = getPropDate(comp, "DTEND") ?? getPropDate(comp, "DUE");
+  // VALARM: match by absolute TRIGGER date-time (RFC 4791 §7.8.5)
+  if (comp.name === "VALARM") {
+    const trigger = getProp(comp, "TRIGGER");
+    if (!trigger) return false;
+    const vtype = trigger.params["VALUE"]?.toUpperCase();
+    if (vtype === "DATE-TIME") {
+      const td = parseDateTime(trigger.value, trigger.params);
+      if (!td) return false;
+      return td >= rangeStart && td < rangeEnd;
+    }
+    // Duration-based TRIGGER requires parent DTSTART — not available here; skip
+    return false;
+  }
+
+  // Helper: parse a date prop, applying tzOffsetMs if the value is floating
+  const adjustedPropDate = (name: string): Date | null => {
+    const p = getProp(comp, name);
+    if (!p) return null;
+    const d = parseDateTime(p.value, p.params);
+    if (!d) return null;
+    const floating = !p.value.endsWith("Z") && !p.params["TZID"] && p.value.length > 8;
+    return floating && tzOffsetMs !== 0 ? new Date(d.getTime() - tzOffsetMs) : d;
+  };
+
+  const dtStart = adjustedPropDate("DTSTART");
+  let dtEnd = adjustedPropDate("DTEND") ?? adjustedPropDate("DUE");
 
   if (!dtStart) return false;
 
   // If no DTEND/DUE, use DTSTART as end (for all-day or instant events)
   if (!dtEnd) {
-    dtEnd = new Date(dtStart.getTime() + 24 * 60 * 60 * 1000); // Add 1 day for DATE-only
+    dtEnd = new Date(dtStart.getTime() + 24 * 60 * 60 * 1000);
   }
 
-  // Overlap: event start < range end AND event end > range start
-  return dtStart < rangeEnd && dtEnd > rangeStart;
+  // Direct overlap check
+  if (dtStart < rangeEnd && dtEnd > rangeStart) return true;
+
+  // RFC 4791 §7.4: if master doesn't overlap, expand RRULE and check occurrences
+  const rruleProp = getProp(comp, "RRULE");
+  if (rruleProp) {
+    const durationMs = Math.max(0, dtEnd.getTime() - dtStart.getTime());
+    if (hasRecurrenceInRange(dtStart, rruleProp.value, rangeStart, rangeEnd, durationMs)) return true;
+  }
+
+  return false;
 }
 
 function matchPropFilter(filter: PropFilter, comp: ICalComponent): boolean {

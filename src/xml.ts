@@ -204,11 +204,22 @@ export interface TextMatch {
   collation?: string;
 }
 
+/** Partial-retrieval spec parsed from C:comp/C:prop elements inside C:calendar-data. */
+export interface CalDataCompSpec {
+  name: string;
+  allProps: boolean;
+  props: Set<string>;    // property names to include (uppercase)
+  allComps: boolean;
+  comps: Map<string, CalDataCompSpec>;
+}
+
 export interface CalendarQuery {
   requestedProps: PropName[];
   allProp: boolean;
   filter: CompFilter;
   timezoneId?: string;
+  timezone?: string;       // raw VTIMEZONE ICS from C:timezone element
+  calDataSpec?: CalDataCompSpec; // partial retrieval C:comp spec
 }
 
 export interface CalendarMultiget {
@@ -299,6 +310,89 @@ function parsePropFilterX(el: XNode): PropFilter {
   return { name, isNotDefined, start, end, textMatch, paramFilters };
 }
 
+function parseCalDataSpec(el: XNode): CalDataCompSpec {
+  const name = (attr(el, "name") ?? "*").toUpperCase();
+  const propEls = findAll(el, NS_CALDAV, "prop");
+  const compEls = findAll(el, NS_CALDAV, "comp");
+  const allProps = propEls.length === 0;
+  const allComps = compEls.length === 0;
+  const props = new Set(propEls.map((p) => (attr(p, "name") ?? "").toUpperCase()));
+  const comps = new Map(compEls.map((c) => {
+    const childSpec = parseCalDataSpec(c);
+    return [childSpec.name, childSpec] as [string, CalDataCompSpec];
+  }));
+  return { name, allProps, allComps, props, comps };
+}
+
+/** Filter ICS content to only include properties/components specified in a CalDataCompSpec. */
+export function applyCalDataSpec(ics: string, spec: CalDataCompSpec): string {
+  const eol = ics.includes("\r\n") ? "\r\n" : "\n";
+  const lines = ics.split(eol);
+  const result: string[] = [];
+  // Stack: [include_this_comp, spec_for_filtering | null = no filter]
+  const stack: [boolean, CalDataCompSpec | null][] = [];
+  let skipProp = false;
+
+  for (const line of lines) {
+    if ((line.startsWith(" ") || line.startsWith("\t")) && stack.length > 0) {
+      if (!skipProp) result.push(line);
+      continue;
+    }
+    skipProp = false;
+
+    if (line.startsWith("BEGIN:")) {
+      const compName = line.slice(6).trim();
+      if (stack.length === 0) {
+        // Root: match against spec
+        const match = spec.name === compName || spec.name === "*";
+        stack.push([match, match ? spec : null]);
+        if (match) result.push(line);
+        continue;
+      }
+      const [parentIncluded, parentSpec] = stack[stack.length - 1];
+      if (!parentIncluded) { stack.push([false, null]); continue; }
+      if (parentSpec === null || parentSpec.allComps) {
+        const childSpec = parentSpec?.comps.get(compName) ?? null;
+        stack.push([true, childSpec]);
+        result.push(line);
+      } else {
+        const childSpec = parentSpec.comps.get(compName);
+        if (childSpec !== undefined || compName === "VTIMEZONE") {
+          stack.push([true, childSpec ?? null]);
+          result.push(line);
+        } else {
+          stack.push([false, null]);
+        }
+      }
+      continue;
+    }
+
+    if (line.startsWith("END:")) {
+      if (stack.length > 0) {
+        const [included] = stack.pop()!;
+        if (included) result.push(line);
+      }
+      continue;
+    }
+
+    if (stack.length === 0) { result.push(line); continue; }
+    const [compIncluded, compSpec] = stack[stack.length - 1];
+    if (!compIncluded) { skipProp = true; continue; }
+    if (compSpec === null || compSpec.allProps) {
+      result.push(line);
+    } else {
+      const propName = line.split(/[:;]/)[0].toUpperCase();
+      if (compSpec.props.has(propName)) {
+        result.push(line);
+      } else {
+        skipProp = true;
+      }
+    }
+  }
+
+  return result.join(eol);
+}
+
 export function parseReport(body: string): ReportRequest {
   const root = parseXML(body);
   if (!root) return { type: "unknown" };
@@ -312,7 +406,14 @@ export function parseReport(body: string): ReportRequest {
     const { names, allProp } = parseRequestedPropsX(root);
     const tzIdEl = findDeep(root, NS_CALDAV, "timezone-id");
     const timezoneId = tzIdEl?.text.trim() || undefined;
-    return { type: "calendar-query", query: { requestedProps: names, allProp, filter: cf, timezoneId } };
+    const tzEl = find(root, NS_CALDAV, "timezone");
+    const timezone = tzEl?.text.trim() || undefined;
+    // Parse C:comp spec from C:calendar-data inside D:prop
+    const propEl = findDeep(root, NS_DAV, "prop");
+    const calDataEl = propEl ? find(propEl, NS_CALDAV, "calendar-data") : undefined;
+    const calDataCompEl = calDataEl ? find(calDataEl, NS_CALDAV, "comp") : undefined;
+    const calDataSpec = calDataCompEl ? parseCalDataSpec(calDataCompEl) : undefined;
+    return { type: "calendar-query", query: { requestedProps: names, allProp, filter: cf, timezoneId, timezone, calDataSpec } };
   }
 
   if (root.local === "calendar-multiget") {

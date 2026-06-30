@@ -13,6 +13,8 @@ import {
 } from "./types.ts";
 
 import {
+  applyCalDataSpec,
+  type CalDataCompSpec,
   C,
   Cattr,
   type CalendarMultiget,
@@ -33,7 +35,7 @@ import {
 } from "./xml.ts";
 
 import type { Storage } from "./storage.ts";
-import { extractUID, matchesFilter, validateCalendarObject, parseICS, getProp, getProps, getComps, type ICalComponent } from "./ical.ts";
+import { extractUID, extractTzOffsetFromVTZ, matchesFilter, validateCalendarObject, parseICS, getProp, getProps, getComps, type ICalComponent } from "./ical.ts";
 import type { Config } from "./config.ts";
 import { isWellFormedXML } from "./xmlparse.ts";
 
@@ -840,9 +842,11 @@ function buildObjectResponse(
   obj: { etag: string; lastModified: Date; contentLength: number; ics: string; deadProps?: Record<string, string> },
   pfReq: PropFindRequest,
   noTimezones = false,
+  calDataSpec?: CalDataCompSpec,
 ): string {
-  const ics = noTimezones ? stripKnownVTimezones(obj.ics) : obj.ics;
-  const contentLength = noTimezones ? new TextEncoder().encode(ics).length : obj.contentLength;
+  let ics = noTimezones ? stripKnownVTimezones(obj.ics) : obj.ics;
+  if (calDataSpec) ics = applyCalDataSpec(ics, calDataSpec);
+  const contentLength = (noTimezones || calDataSpec) ? new TextEncoder().encode(ics).length : obj.contentLength;
   return buildPropsResponse(
     href,
     objectPropsMap(obj.etag, obj.lastModified, contentLength, ics, obj.deadProps ?? {}),
@@ -1383,6 +1387,9 @@ async function handleCalendarQuery(
     );
   }
 
+  // Extract timezone offset for floating-time filtering (RFC 4791 §9.8)
+  const tzOffsetMs = query.timezone ? extractTzOffsetFromVTZ(query.timezone) : 0;
+
   // calendar-query must target a collection
   if (resType === "object") {
     // RFC 4791 §7.8: REPORT on a non-collection — return just this object if it matches
@@ -1392,8 +1399,8 @@ async function handleCalendarQuery(
     if (!obj) return respond(404, "Not found");
     const pfReq: PropFindRequest = { type: "prop", names: query.requestedProps };
     const responses: string[] = [];
-    if (matchesFilter(obj.ics, query.filter)) {
-      responses.push(buildObjectResponse(obj.href, obj, pfReq, noTimezones));
+    if (matchesFilter(obj.ics, query.filter, tzOffsetMs)) {
+      responses.push(buildObjectResponse(obj.href, obj, pfReq, noTimezones, query.calDataSpec));
     }
     return xmlResponse(207, multiStatusXML(responses));
   }
@@ -1413,8 +1420,8 @@ async function handleCalendarQuery(
 
   const responses: string[] = [];
   for (const obj of objs) {
-    if (matchesFilter(obj.ics, query.filter)) {
-      responses.push(buildObjectResponse(obj.href, obj, pfReq, noTimezones));
+    if (matchesFilter(obj.ics, query.filter, tzOffsetMs)) {
+      responses.push(buildObjectResponse(obj.href, obj, pfReq, noTimezones, query.calDataSpec));
     }
   }
 
@@ -1589,6 +1596,25 @@ async function handleFreeBusyQuery(
   for (const obj of objects) {
     try {
       const cal = parseICS(obj.ics);
+
+      // RFC 4791 §7.10: derive busy periods from VEVENTs (TRANSP/STATUS determine FBTYPE)
+      for (const ev of getComps(cal, "VEVENT")) {
+        const transp = getProp(ev, "TRANSP")?.value?.toUpperCase();
+        if (transp === "TRANSPARENT") continue;
+        const status = getProp(ev, "STATUS")?.value?.toUpperCase();
+        if (status === "CANCELLED") continue;
+        const evStart = getPropDate2(ev, "DTSTART");
+        if (!evStart) continue;
+        const evEnd = getPropDate2(ev, "DTEND") ?? new Date(evStart.getTime() + 86400000);
+        const qStart2 = rangeStart ?? new Date(0);
+        const qEnd2 = rangeEnd ?? new Date(8.64e15);
+        if (evStart >= qEnd2 || evEnd <= qStart2) continue;
+        const fbtype = status === "TENTATIVE" ? "BUSY-TENTATIVE" : "BUSY";
+        const effS = evStart > qStart2 ? evStart : qStart2;
+        const effE = evEnd < qEnd2 ? evEnd : qEnd2;
+        freebusyLines.push(`FREEBUSY;FBTYPE=${fbtype}:${formatICalDateTime(effS)}/${formatICalDateTime(effE)}`);
+      }
+
       for (const va of getComps(cal, "VAVAILABILITY")) {
         const dtStart = getPropDate2(va, "DTSTART");
         const dtEnd = getPropDate2(va, "DTEND");
