@@ -13,7 +13,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/calstakk': 'http://localhost:5232',
+      '/principals': 'http://localhost:5232',
+      '/calendars': 'http://localhost:5232',
+      '/.well-known': 'http://localhost:5232',
     },
   },
 })
