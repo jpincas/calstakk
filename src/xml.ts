@@ -1,7 +1,7 @@
 // XML utilities: namespace constants, element builders, multistatus responses,
 // and request body parsing for PROPFIND / PROPPATCH / REPORT.
 
-import { attr, find, findAll, findAllDeep, findDeep, parseXML, type XNode } from "./xmlparse.ts";
+import { attr, find, findAll, findAllDeep, findDeep, parseXML, serializeXNode, type XNode } from "./xmlparse.ts";
 
 export const NS_DAV = "DAV:";
 export const NS_CALDAV = "urn:ietf:params:xml:ns:caldav";
@@ -102,6 +102,7 @@ function statusText(code: number): string {
     405: "Method Not Allowed",
     409: "Conflict",
     412: "Precondition Failed",
+    424: "Failed Dependency",
     500: "Internal Server Error",
   };
   return texts[code] ?? "Unknown";
@@ -144,6 +145,7 @@ export interface PropPatchOp {
   ns: string;
   local: string;
   value: string;
+  rawXml: string; // full serialized XML element for the property
 }
 
 export function parseProppatch(body: string): PropPatchOp[] {
@@ -155,7 +157,7 @@ export function parseProppatch(body: string): PropPatchOp[] {
     const propEl = find(setEl, NS_DAV, "prop");
     if (!propEl) continue;
     for (const child of propEl.children) {
-      ops.push({ type: "set", ns: child.ns, local: child.local, value: child.text.trim() });
+      ops.push({ type: "set", ns: child.ns, local: child.local, value: child.text.trim(), rawXml: serializeXNode(child) });
     }
   }
 
@@ -163,7 +165,7 @@ export function parseProppatch(body: string): PropPatchOp[] {
     const propEl = find(removeEl, NS_DAV, "prop");
     if (!propEl) continue;
     for (const child of propEl.children) {
-      ops.push({ type: "remove", ns: child.ns, local: child.local, value: "" });
+      ops.push({ type: "remove", ns: child.ns, local: child.local, value: "", rawXml: "" });
     }
   }
 
@@ -199,12 +201,14 @@ export interface ParamFilter {
 export interface TextMatch {
   text: string;
   negateCondition: boolean;
+  collation?: string;
 }
 
 export interface CalendarQuery {
   requestedProps: PropName[];
   allProp: boolean;
   filter: CompFilter;
+  timezoneId?: string;
 }
 
 export interface CalendarMultiget {
@@ -224,6 +228,7 @@ export type ReportRequest =
   | { type: "calendar-multiget"; multiget: CalendarMultiget }
   | { type: "sync-collection"; sync: SyncCollectionQuery }
   | { type: "free-busy-query"; start: string; end: string }
+  | { type: "expand-property" }
   | { type: "unknown" };
 
 function parseRequestedPropsX(root: XNode): { names: PropName[]; allProp: boolean } {
@@ -273,6 +278,7 @@ function parsePropFilterX(el: XNode): PropFilter {
     textMatch = {
       text: textMatchEl.text.trim(),
       negateCondition: attr(textMatchEl, "negate-condition") === "yes",
+      collation: attr(textMatchEl, "collation") ?? undefined,
     };
   }
 
@@ -284,6 +290,7 @@ function parsePropFilterX(el: XNode): PropFilter {
       ? {
         text: pfTm.text.trim(),
         negateCondition: attr(pfTm, "negate-condition") === "yes",
+        collation: attr(pfTm, "collation") ?? undefined,
       }
       : undefined;
     return { name: pfName, isNotDefined: pfNotDefined, textMatch: pfTextMatch };
@@ -303,7 +310,9 @@ export function parseReport(body: string): ReportRequest {
     if (!compFilterEl) return { type: "unknown" };
     const cf = parseCompFilterX(compFilterEl);
     const { names, allProp } = parseRequestedPropsX(root);
-    return { type: "calendar-query", query: { requestedProps: names, allProp, filter: cf } };
+    const tzIdEl = findDeep(root, NS_CALDAV, "timezone-id");
+    const timezoneId = tzIdEl?.text.trim() || undefined;
+    return { type: "calendar-query", query: { requestedProps: names, allProp, filter: cf, timezoneId } };
   }
 
   if (root.local === "calendar-multiget") {
@@ -326,6 +335,10 @@ export function parseReport(body: string): ReportRequest {
     const start = trEl ? (attr(trEl, "start") ?? "") : "";
     const end = trEl ? (attr(trEl, "end") ?? "") : "";
     return { type: "free-busy-query", start, end };
+  }
+
+  if (root.local === "expand-property") {
+    return { type: "expand-property" };
   }
 
   return { type: "unknown" };

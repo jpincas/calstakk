@@ -103,6 +103,17 @@ export interface ValidationError {
   message: string;
 }
 
+/** Returns true if the value is a UTC DATE-TIME (contains T and ends with Z). */
+function isUTCDateTime(value: string): boolean {
+  return value.includes("T") && value.endsWith("Z");
+}
+
+/** Returns the value type of a DATE or DATE-TIME property. */
+function getValueType(prop: ICalProp): "DATE" | "DATE-TIME" {
+  if (prop.params["VALUE"] === "DATE" || prop.value.length === 8) return "DATE";
+  return "DATE-TIME";
+}
+
 /** Validate a VCALENDAR per RFC 4791 §4.1. */
 export function validateCalendarObject(cal: ICalComponent): ValidationError | null {
   // Must be VCALENDAR
@@ -122,25 +133,79 @@ export function validateCalendarObject(cal: ICalComponent): ValidationError | nu
     return { code: 400, precondition: "valid-calendar-data", message: "PRODID is required" };
   }
 
-  // No METHOD property allowed in stored objects (RFC 5546)
+  // Duplicate PRODID not allowed
+  if (getProps(cal, "PRODID").length > 1) {
+    return { code: 400, precondition: "valid-calendar-data", message: "Duplicate PRODID" };
+  }
+
+  // Duplicate VERSION not allowed
+  if (getProps(cal, "VERSION").length > 1) {
+    return { code: 400, precondition: "valid-calendar-data", message: "Duplicate VERSION" };
+  }
+
+  // METHOD: only CANCEL is allowed (RFC 5546 §3.2.5)
   const method = getProp(cal, "METHOD");
-  if (method) {
+  if (method && method.value.toUpperCase() !== "CANCEL") {
     return {
       code: 403,
       precondition: "valid-calendar-object-resource",
-      message: "METHOD property not allowed in stored calendar objects",
+      message: `METHOD:${method.value} is not allowed in stored calendar objects`,
     };
   }
+  const isCancel = method?.value.toUpperCase() === "CANCEL";
 
-  // Count component types (only VEVENT and VTODO supported)
+  // VTIMEZONE must be present for any TZID reference (RFC 5545 §3.1.2).
+  // RFC 7809 §3.1.4: non-standard X-* TZIDs without VTIMEZONE return 403/valid-timezone;
+  // all other unknown TZIDs return 400/valid-calendar-data.
+  const vtimezoneIds = new Set(getComps(cal, "VTIMEZONE").map((vtz) => getProp(vtz, "TZID")?.value ?? "").filter(Boolean));
+  const dateTimeProps = ["DTSTART", "DTEND", "DUE", "COMPLETED", "CREATED", "LAST-MODIFIED", "RECURRENCE-ID", "TRIGGER"];
+  for (const comp of cal.children) {
+    for (const propName of dateTimeProps) {
+      for (const prop of getProps(comp, propName)) {
+        const tzid = prop.params["TZID"];
+        if (tzid && !vtimezoneIds.has(tzid)) {
+          if (tzid.startsWith("X-")) {
+            return {
+              code: 403,
+              precondition: "valid-timezone",
+              message: `Unknown timezone TZID=${tzid}: no embedded VTIMEZONE present`,
+            };
+          }
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: `VTIMEZONE component required for TZID=${tzid} used in ${propName}`,
+          };
+        }
+      }
+    }
+  }
+
+  // VTIMEZONE: each STANDARD/DAYLIGHT sub-component must have TZOFFSETFROM
+  for (const vtz of getComps(cal, "VTIMEZONE")) {
+    for (const sub of vtz.children) {
+      if (sub.name === "STANDARD" || sub.name === "DAYLIGHT") {
+        if (!getProp(sub, "TZOFFSETFROM")) {
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: "VTIMEZONE STANDARD/DAYLIGHT missing TZOFFSETFROM",
+          };
+        }
+      }
+    }
+  }
+
+  // Count component types (VEVENT, VTODO, and VAVAILABILITY supported)
   const vevents = getComps(cal, "VEVENT");
   const vtodos = getComps(cal, "VTODO");
-  const total = vevents.length + vtodos.length;
+  const vavails = getComps(cal, "VAVAILABILITY");
+  const total = vevents.length + vtodos.length + vavails.length;
 
   if (total === 0) {
     // Check for unsupported types like VJOURNAL
     const others = cal.children.filter(
-      (c) => !["VTIMEZONE", "VEVENT", "VTODO"].includes(c.name),
+      (c) => !["VTIMEZONE", "VEVENT", "VTODO", "VAVAILABILITY"].includes(c.name),
     );
     if (others.length > 0) {
       return {
@@ -149,7 +214,73 @@ export function validateCalendarObject(cal: ICalComponent): ValidationError | nu
         message: `Unsupported component type: ${others[0].name}`,
       };
     }
-    return { code: 400, precondition: "valid-calendar-data", message: "No VEVENT or VTODO found" };
+    return { code: 400, precondition: "valid-calendar-data", message: "No VEVENT, VTODO, or VAVAILABILITY found" };
+  }
+
+  // VAVAILABILITY validation (RFC 7953 §3.1)
+  if (vavails.length > 0) {
+    for (const comp of vavails) {
+      // UID required
+      if (!getProp(comp, "UID")) {
+        return { code: 400, precondition: "valid-calendar-data", message: "VAVAILABILITY UID is required" };
+      }
+      // DTSTAMP required
+      if (!getProp(comp, "DTSTAMP")) {
+        return { code: 400, precondition: "valid-calendar-data", message: "VAVAILABILITY DTSTAMP is required" };
+      }
+      const dtstart = getProp(comp, "DTSTART");
+      const dtend = getProp(comp, "DTEND");
+      const duration = getProp(comp, "DURATION");
+      // DTSTART/DTEND must be DATE-TIME, not DATE
+      if (dtstart && dtstart.params["VALUE"] === "DATE") {
+        return { code: 400, precondition: "valid-calendar-data", message: "VAVAILABILITY DTSTART must be DATE-TIME" };
+      }
+      if (dtend && dtend.params["VALUE"] === "DATE") {
+        return { code: 400, precondition: "valid-calendar-data", message: "VAVAILABILITY DTEND must be DATE-TIME" };
+      }
+      // DTEND and DURATION mutually exclusive
+      if (dtend && duration) {
+        return { code: 400, precondition: "valid-calendar-data", message: "VAVAILABILITY cannot have both DTEND and DURATION" };
+      }
+      // DURATION requires DTSTART
+      if (duration && !dtstart) {
+        return { code: 400, precondition: "valid-calendar-data", message: "VAVAILABILITY DURATION requires DTSTART" };
+      }
+      // DTEND must not precede DTSTART
+      if (dtstart && dtend) {
+        const start = parseDateTime(dtstart.value, dtstart.params);
+        const end = parseDateTime(dtend.value, dtend.params);
+        if (start && end && end < start) {
+          return { code: 400, precondition: "valid-calendar-data", message: "VAVAILABILITY DTEND must not precede DTSTART" };
+        }
+      }
+      // AVAILABLE sub-components
+      for (const avail of getComps(comp, "AVAILABLE")) {
+        if (!getProp(avail, "UID")) {
+          return { code: 400, precondition: "valid-calendar-data", message: "AVAILABLE UID is required" };
+        }
+        if (!getProp(avail, "DTSTAMP")) {
+          return { code: 400, precondition: "valid-calendar-data", message: "AVAILABLE DTSTAMP is required" };
+        }
+        const aStart = getProp(avail, "DTSTART");
+        if (!aStart) {
+          return { code: 400, precondition: "valid-calendar-data", message: "AVAILABLE DTSTART is required" };
+        }
+        if (aStart.params["VALUE"] === "DATE") {
+          return { code: 400, precondition: "valid-calendar-data", message: "AVAILABLE DTSTART must be DATE-TIME" };
+        }
+        const aEnd = getProp(avail, "DTEND");
+        if (aEnd && aEnd.params["VALUE"] === "DATE") {
+          return { code: 400, precondition: "valid-calendar-data", message: "AVAILABLE DTEND must be DATE-TIME" };
+        }
+        const aDur = getProp(avail, "DURATION");
+        if (aEnd && aDur) {
+          return { code: 400, precondition: "valid-calendar-data", message: "AVAILABLE cannot have both DTEND and DURATION" };
+        }
+      }
+    }
+    // Return early — VAVAILABILITY objects skip VEVENT/VTODO validation
+    return null;
   }
 
   if (vevents.length > 0 && vtodos.length > 0) {
@@ -178,14 +309,351 @@ export function validateCalendarObject(cal: ICalComponent): ValidationError | nu
     };
   }
 
-  // DTSTAMP is required on every VEVENT and VTODO (RFC 5545 §3.6.1, §3.6.2)
+  // Per-component validation
   for (const comp of components) {
-    if (!getProp(comp, "DTSTAMP")) {
+    // VEVENT-specific checks
+    if (comp.name === "VEVENT") {
+      // For METHOD:CANCEL, validate SEQUENCE >= 1 and STATUS constraints
+      if (isCancel) {
+        const seq = getProp(comp, "SEQUENCE");
+        const seqVal = seq ? parseInt(seq.value, 10) : 0;
+        if (!seq || seqVal < 1) {
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: "CANCEL VEVENT must have SEQUENCE >= 1",
+          };
+        }
+        const status = getProp(comp, "STATUS");
+        if (status && status.value !== "CANCELLED") {
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: "CANCEL VEVENT STATUS must be CANCELLED if present",
+          };
+        }
+        // Skip DTSTART requirement for CANCEL
+      } else {
+        // DTSTART is required for non-CANCEL VEVENT
+        if (!getProp(comp, "DTSTART")) {
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: "DTSTART is required in VEVENT",
+          };
+        }
+        // PARTSTAT=PARTIAL is only valid for VTODO (RFC 5546 §3.4.3)
+        for (const attendee of getProps(comp, "ATTENDEE")) {
+          if (attendee.params["PARTSTAT"]?.toUpperCase() === "PARTIAL") {
+            return {
+              code: 400,
+              precondition: "valid-calendar-data",
+              message: "ATTENDEE PARTSTAT=PARTIAL is not valid in VEVENT",
+            };
+          }
+        }
+      }
+
+      // Cannot have both DTEND and DURATION
+      if (getProp(comp, "DTEND") && getProp(comp, "DURATION")) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: "VEVENT cannot have both DTEND and DURATION",
+        };
+      }
+
+      // DTEND type must match DTSTART type; DTEND must not precede DTSTART
+      const dtstartProp = getProp(comp, "DTSTART");
+      const dtendProp = getProp(comp, "DTEND");
+      if (dtstartProp && dtendProp) {
+        if (getValueType(dtstartProp) !== getValueType(dtendProp)) {
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: "VEVENT DTEND value type must match DTSTART value type",
+          };
+        }
+        const dtStartDate = parseDateTime(dtstartProp.value, dtstartProp.params);
+        const dtEndDate = parseDateTime(dtendProp.value, dtendProp.params);
+        if (dtStartDate && dtEndDate && dtEndDate < dtStartDate) {
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: "VEVENT DTEND must not precede DTSTART",
+          };
+        }
+      }
+
+      // STATUS values restricted to TENTATIVE, CONFIRMED, CANCELLED
+      const status = getProp(comp, "STATUS");
+      if (status && !["TENTATIVE", "CONFIRMED", "CANCELLED"].includes(status.value)) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: `Invalid VEVENT STATUS value: ${status.value}`,
+        };
+      }
+    }
+
+    // VTODO-specific checks
+    if (comp.name === "VTODO") {
+      // For METHOD:CANCEL, validate SEQUENCE >= 1 and STATUS constraints
+      if (isCancel) {
+        const seq = getProp(comp, "SEQUENCE");
+        const seqVal = seq ? parseInt(seq.value, 10) : 0;
+        if (!seq || seqVal < 1) {
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: "CANCEL VTODO must have SEQUENCE >= 1",
+          };
+        }
+        const status = getProp(comp, "STATUS");
+        if (status && status.value !== "CANCELLED") {
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: "CANCEL VTODO STATUS must be CANCELLED if present",
+          };
+        }
+      }
+
+      // Cannot have both DUE and DURATION
+      if (getProp(comp, "DUE") && getProp(comp, "DURATION")) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: "VTODO cannot have both DUE and DURATION",
+        };
+      }
+
+      // DURATION requires DTSTART
+      if (getProp(comp, "DURATION") && !getProp(comp, "DTSTART")) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: "VTODO DURATION requires DTSTART",
+        };
+      }
+
+      // DUE type must match DTSTART type; DUE must not precede DTSTART
+      const dtstartProp = getProp(comp, "DTSTART");
+      const dueProp = getProp(comp, "DUE");
+      if (dtstartProp && dueProp) {
+        if (getValueType(dtstartProp) !== getValueType(dueProp)) {
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: "VTODO DUE value type must match DTSTART value type",
+          };
+        }
+        const dtStartDate = parseDateTime(dtstartProp.value, dtstartProp.params);
+        const dueDate = parseDateTime(dueProp.value, dueProp.params);
+        if (dtStartDate && dueDate && dueDate < dtStartDate) {
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: "VTODO DUE must not precede DTSTART",
+          };
+        }
+      }
+
+      // STATUS values restricted to NEEDS-ACTION, COMPLETED, IN-PROCESS, CANCELLED
+      const status = getProp(comp, "STATUS");
+      if (status && !["NEEDS-ACTION", "COMPLETED", "IN-PROCESS", "CANCELLED"].includes(status.value)) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: `Invalid VTODO STATUS value: ${status.value}`,
+        };
+      }
+
+      // COMPLETED must be UTC
+      const completed = getProp(comp, "COMPLETED");
+      if (completed && !isUTCDateTime(completed.value)) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: "VTODO COMPLETED must be a UTC DATE-TIME",
+        };
+      }
+    }
+
+    // Checks for all components (VEVENT and VTODO)
+
+    // DTSTAMP is required and must be UTC
+    const dtstamp = getProp(comp, "DTSTAMP");
+    if (!dtstamp) {
       return {
         code: 400,
         precondition: "valid-calendar-data",
         message: `DTSTAMP is required in ${comp.name}`,
       };
+    }
+    if (!isUTCDateTime(dtstamp.value)) {
+      return {
+        code: 400,
+        precondition: "valid-calendar-data",
+        message: `DTSTAMP must be a UTC DATE-TIME in ${comp.name}`,
+      };
+    }
+
+    // CREATED must be UTC (if present)
+    const created = getProp(comp, "CREATED");
+    if (created && !isUTCDateTime(created.value)) {
+      return {
+        code: 400,
+        precondition: "valid-calendar-data",
+        message: `CREATED must be a UTC DATE-TIME in ${comp.name}`,
+      };
+    }
+
+    // PRIORITY must be 0-9 integer (if present)
+    const priority = getProp(comp, "PRIORITY");
+    if (priority) {
+      const pval = parseInt(priority.value, 10);
+      if (isNaN(pval) || pval < 0 || pval > 9 || String(pval) !== priority.value) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: `PRIORITY must be an integer 0-9 in ${comp.name}`,
+        };
+      }
+    }
+
+    // PERCENT-COMPLETE must be 0-100 integer (if present)
+    const pct = getProp(comp, "PERCENT-COMPLETE");
+    if (pct) {
+      const pval = parseInt(pct.value, 10);
+      if (isNaN(pval) || pval < 0 || pval > 100 || String(pval) !== pct.value) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: `PERCENT-COMPLETE must be an integer 0-100 in ${comp.name}`,
+        };
+      }
+    }
+
+    // Duplicate RRULE not allowed
+    if (getProps(comp, "RRULE").length > 1) {
+      return {
+        code: 400,
+        precondition: "valid-calendar-data",
+        message: `Duplicate RRULE not allowed in ${comp.name}`,
+      };
+    }
+
+    // Multiple REQUEST-STATUS must share the same top-level numeric class (RFC 5546 §3.6)
+    const reqStatuses = getProps(comp, "REQUEST-STATUS");
+    if (reqStatuses.length > 1) {
+      const classes = new Set(reqStatuses.map((rs) => rs.value.split(".")[0]));
+      if (classes.size > 1) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: "Multiple REQUEST-STATUS must share the same top-level numeric class",
+        };
+      }
+    }
+
+    // VALARM checks
+    for (const alarm of getComps(comp, "VALARM")) {
+      // ACTION required
+      const action = getProp(alarm, "ACTION");
+      if (!action) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: "VALARM ACTION is required",
+        };
+      }
+
+      // TRIGGER required
+      if (!getProp(alarm, "TRIGGER")) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: "VALARM TRIGGER is required",
+        };
+      }
+
+      // ACTION:DISPLAY → DESCRIPTION required
+      if (action.value === "DISPLAY" && !getProp(alarm, "DESCRIPTION")) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: "VALARM ACTION:DISPLAY requires DESCRIPTION",
+        };
+      }
+
+      // ACTION:EMAIL → DESCRIPTION, SUMMARY, and ATTENDEE all required
+      if (action.value === "EMAIL") {
+        if (!getProp(alarm, "DESCRIPTION")) {
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: "VALARM ACTION:EMAIL requires DESCRIPTION",
+          };
+        }
+        if (!getProp(alarm, "SUMMARY")) {
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: "VALARM ACTION:EMAIL requires SUMMARY",
+          };
+        }
+        if (!getProp(alarm, "ATTENDEE")) {
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: "VALARM ACTION:EMAIL requires ATTENDEE",
+          };
+        }
+      }
+
+      // REPEAT present → DURATION must also be present
+      if (getProp(alarm, "REPEAT") && !getProp(alarm, "DURATION")) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: "VALARM REPEAT requires DURATION",
+        };
+      }
+    }
+
+    // RFC 9253 §6.1/§8.2: LINK property requires both LINKREL and VALUE parameters
+    for (const link of getProps(comp, "LINK")) {
+      if (!link.params["LINKREL"]) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: "LINK property MUST include LINKREL parameter (RFC 9253 §6.1)",
+        };
+      }
+      if (!link.params["VALUE"]) {
+        return {
+          code: 400,
+          precondition: "valid-calendar-data",
+          message: "LINK property MUST include VALUE parameter (RFC 9253 §8.2)",
+        };
+      }
+    }
+
+    // RFC 9253 §9.1: RELATED-TO with RELTYPE=PARENT/CHILD/SIBLING must use VALUE=UID
+    const parentChildSiblingTypes = new Set(["PARENT", "CHILD", "SIBLING"]);
+    for (const rel of getProps(comp, "RELATED-TO")) {
+      const reltype = rel.params["RELTYPE"]?.toUpperCase();
+      if (reltype && parentChildSiblingTypes.has(reltype)) {
+        const valueType = rel.params["VALUE"]?.toUpperCase();
+        if (valueType && valueType !== "UID") {
+          return {
+            code: 400,
+            precondition: "valid-calendar-data",
+            message: `RELATED-TO;RELTYPE=${reltype} requires VALUE=UID (RFC 9253 §9.1)`,
+          };
+        }
+      }
     }
   }
 
@@ -297,6 +765,7 @@ function matchComp(filter: CompFilter, comp: ICalComponent): boolean {
 function matchCompFilter(filter: CompFilter, parent: ICalComponent): boolean {
   const children = parent.children.filter((c) => c.name === filter.name.toUpperCase());
   if (children.length === 0) return filter.isNotDefined;
+  if (filter.isNotDefined) return false; // component IS defined → is-not-defined fails
 
   for (const child of children) {
     if (matchComp(filter, child)) return true;
@@ -309,6 +778,18 @@ function matchCompTimeRange(
   end: Date | undefined,
   comp: ICalComponent,
 ): boolean {
+  const rangeStart = start ?? new Date(0);
+  const rangeEnd = end ?? new Date(8.64e15);
+
+  // VAVAILABILITY: RFC 7953 §7.2.2 — unbounded DTSTART/DTEND are allowed
+  if (comp.name === "VAVAILABILITY") {
+    const dtStart = getPropDate(comp, "DTSTART");
+    const dtEnd = getPropDate(comp, "DTEND");
+    const windowStart = dtStart ?? new Date(0);   // unbounded left
+    const windowEnd = dtEnd ?? new Date(8.64e15); // unbounded right
+    return windowStart < rangeEnd && windowEnd > rangeStart;
+  }
+
   const dtStart = getPropDate(comp, "DTSTART");
   let dtEnd = getPropDate(comp, "DTEND") ?? getPropDate(comp, "DUE");
 
@@ -318,9 +799,6 @@ function matchCompTimeRange(
   if (!dtEnd) {
     dtEnd = new Date(dtStart.getTime() + 24 * 60 * 60 * 1000); // Add 1 day for DATE-only
   }
-
-  const rangeStart = start ?? new Date(0);
-  const rangeEnd = end ?? new Date(8.64e15);
 
   // Overlap: event start < range end AND event end > range start
   return dtStart < rangeEnd && dtEnd > rangeStart;

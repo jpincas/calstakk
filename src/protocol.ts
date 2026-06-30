@@ -17,7 +17,10 @@ import {
   Cattr,
   type CalendarMultiget,
   type CalendarQuery,
+  type CompFilter,
+  type PropFilter,
   D,
+  esc,
   multiStatusXML,
   notFoundResponseXML,
   parsePropfind,
@@ -30,8 +33,23 @@ import {
 } from "./xml.ts";
 
 import type { Storage } from "./storage.ts";
-import { extractUID, matchesFilter, validateCalendarObject, parseICS } from "./ical.ts";
+import { extractUID, matchesFilter, validateCalendarObject, parseICS, getProp, getProps, getComps, type ICalComponent } from "./ical.ts";
 import type { Config } from "./config.ts";
+import { isWellFormedXML } from "./xmlparse.ts";
+
+// ─── Sync-token URI helpers ───────────────────────────────────────────────────
+
+const SYNC_TOKEN_PREFIX = "urn:calstakk:sync:";
+
+function wrapSyncToken(rawToken: string): string {
+  return `${SYNC_TOKEN_PREFIX}${rawToken}`;
+}
+
+function unwrapSyncToken(uriToken: string): string {
+  return uriToken.startsWith(SYNC_TOKEN_PREFIX)
+    ? uriToken.slice(SYNC_TOKEN_PREFIX.length)
+    : uriToken;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,18 +64,19 @@ function textResponse(status: number, body: string): Response {
   });
 }
 
-function xmlResponse(status: number, body: string): Response {
+function xmlResponse(status: number, body: string, extraHeaders: Record<string, string> = {}): Response {
   return new Response(body, {
     status,
     headers: {
       "Content-Type": "application/xml; charset=utf-8",
+      ...extraHeaders,
     },
   });
 }
 
-const DAV_HEADER = "1, calendar-access";
+const DAV_HEADER = "1, calendar-access, calendar-availability, calendar-no-timezone, calendar-managed-attachments, calendar-managed-attachments-no-recurrence";
 const ALLOW_HEADER =
-  "OPTIONS, GET, HEAD, PUT, DELETE, PROPFIND, PROPPATCH, MKCOL, MKCALENDAR, REPORT";
+  "OPTIONS, GET, HEAD, PUT, POST, DELETE, PROPFIND, PROPPATCH, MKCOL, MKCALENDAR, REPORT";
 
 // ─── createHandler ────────────────────────────────────────────────────────────
 
@@ -83,9 +102,10 @@ async function route(req: Request, storage: Storage, config: Config): Promise<Re
   const path = decodeURIComponent(url.pathname);
   const method = req.method.toUpperCase();
 
-  // /.well-known/caldav redirect
+  // /.well-known/caldav redirect — RFC 6764 §5: must use absolute URI, must include Cache-Control
   if (path === "/.well-known/caldav") {
-    return respond(308, "", { Location: PRINCIPAL_PATH });
+    const absLocation = `${url.origin}${PRINCIPAL_PATH}`;
+    return respond(308, "", { Location: absLocation, "Cache-Control": "no-cache" });
   }
 
   const resType = resourceTypeAtPath(path);
@@ -94,7 +114,7 @@ async function route(req: Request, storage: Storage, config: Config): Promise<Re
     case "OPTIONS":
       return handleOptions();
     case "GET":
-      return await handleGet(path, resType, storage);
+      return await handleGet(req, path, resType, storage);
     case "HEAD":
       return await handleHead(path, resType, storage);
     case "PUT":
@@ -106,15 +126,17 @@ async function route(req: Request, storage: Storage, config: Config): Promise<Re
     case "PROPPATCH":
       return await handleProppatch(req, path, resType, storage);
     case "MKCOL":
-      return await handleMkcol(path, resType, storage, false);
+      return await handleMkcol(req, path, resType, storage, false);
     case "MKCALENDAR":
-      return await handleMkcol(path, resType, storage, true);
+      return await handleMkcol(req, path, resType, storage, true);
     case "REPORT":
       return await handleReport(req, path, resType, storage);
     case "COPY":
-      return respond(501, "COPY not implemented");
+      return await handleCopy(req, path, resType, storage);
     case "MOVE":
-      return respond(501, "MOVE not implemented");
+      return await handleMove(req, path, resType, storage);
+    case "POST":
+      return await handlePost(req, path, resType, storage);
     default:
       return respond(405, "Method not allowed", { Allow: ALLOW_HEADER });
   }
@@ -132,7 +154,42 @@ function handleOptions(): Response {
 
 // ─── GET / HEAD ───────────────────────────────────────────────────────────────
 
-async function handleGet(path: string, resType: ResourceType, storage: Storage): Promise<Response> {
+// RFC 7809 §3.1.3: strip VTIMEZONE blocks for well-known (non-X-prefix) TZIDs
+function stripKnownVTimezones(ics: string): string {
+  const eol = ics.includes("\r\n") ? "\r\n" : "\n";
+  const lines = ics.split(eol);
+  const result: string[] = [];
+  let inVTZ = false;
+  let keepVTZ = false;
+  const vtzLines: string[] = [];
+
+  for (const line of lines) {
+    if (!inVTZ) {
+      if (line === "BEGIN:VTIMEZONE") {
+        inVTZ = true;
+        keepVTZ = false;
+        vtzLines.length = 0;
+        vtzLines.push(line);
+      } else {
+        result.push(line);
+      }
+    } else {
+      vtzLines.push(line);
+      if (line.startsWith("TZID:")) {
+        const tzid = line.slice(5).trim();
+        keepVTZ = tzid.startsWith("X-");
+      }
+      if (line === "END:VTIMEZONE") {
+        inVTZ = false;
+        if (keepVTZ) result.push(...vtzLines);
+        vtzLines.length = 0;
+      }
+    }
+  }
+  return result.join(eol);
+}
+
+async function handleGet(req: Request, path: string, resType: ResourceType, storage: Storage): Promise<Response> {
   if (resType !== "object") {
     return respond(405, "Method not allowed");
   }
@@ -141,11 +198,15 @@ async function handleGet(path: string, resType: ResourceType, storage: Storage):
   const obj = await storage.getObject(colName, uid);
   if (!obj) return respond(404, "Not found");
 
-  return new Response(obj.ics, {
+  const noTimezones = (req.headers.get("CalDAV-Timezones") ?? "").toUpperCase() === "F";
+  const ics = noTimezones ? stripKnownVTimezones(obj.ics) : obj.ics;
+  const contentLength = noTimezones ? new TextEncoder().encode(ics).length : obj.contentLength;
+
+  return new Response(ics, {
     status: 200,
     headers: {
       "Content-Type": "text/calendar; charset=utf-8",
-      "Content-Length": String(obj.contentLength),
+      "Content-Length": String(contentLength),
       ETag: obj.etag,
       "Last-Modified": obj.lastModified.toUTCString(),
     },
@@ -223,7 +284,7 @@ async function handlePut(
   // Check collection exists
   const col = await storage.getCalendar(colName);
   if (!col) {
-    return respond(404, `Calendar collection not found: ${colName}`);
+    return respond(409, `Calendar collection not found: ${colName}`);
   }
 
   // ETag preconditions
@@ -243,10 +304,68 @@ async function handlePut(
     }
   }
 
+  // WebDAV If header check
+  const ifHeader = req.headers.get("If");
+  if (ifHeader) {
+    // State-token form: <resource-URI> (<state-token>) — RFC 4918 §10.4
+    const stateTokenMatch = ifHeader.match(/<([^>]+)>\s*\(<([^>]+)>\)/);
+    if (stateTokenMatch) {
+      const tokenUri = stateTokenMatch[2];
+      if (tokenUri.startsWith(SYNC_TOKEN_PREFIX)) {
+        const ifPath = stateTokenMatch[1];
+        let ifColName: string;
+        try {
+          ifColName = collectionNameFromPath(new URL(ifPath).pathname);
+        } catch {
+          ifColName = collectionNameFromPath(ifPath);
+        }
+        const currentToken = wrapSyncToken(await storage.getSyncToken(ifColName));
+        if (tokenUri !== currentToken) {
+          return respond(412, "Precondition Failed: stale sync-token");
+        }
+      }
+    }
+    // ETag form: ["etag"]
+    const etagMatch = ifHeader.match(/\["([^"]+)"\]/);
+    if (etagMatch) {
+      const expectedETag = `"${etagMatch[1]}"`;
+      const obj2 = await storage.getObject(colName, uid);
+      if (!obj2 || obj2.etag !== expectedETag) {
+        return respond(412, "Precondition Failed: If header condition not met");
+      }
+    }
+  }
+
   // UID conflict check: same icalUID at a different URL
   const existingUID = await storage.findObjectByICalUID(colName, icalUID);
   if (existingUID && existingUID !== uid) {
     return xmlResponse(409, buildPreconditionError("no-uid-conflict"));
+  }
+
+  // RFC 8607 §3.4: ATTACH;MANAGED-ID= must have been assigned by the server via POST
+  // Since we don't implement full attachment storage, any MANAGED-ID in a PUT is invalid
+  for (const comp of [...getComps(cal, "VEVENT"), ...getComps(cal, "VTODO")]) {
+    for (const attach of getProps(comp, "ATTACH")) {
+      if (attach.params["MANAGED-ID"]) {
+        return xmlResponse(403, buildPreconditionError("valid-managed-id-parameter"));
+      }
+    }
+  }
+
+  // SEQUENCE check: reject stale updates (RFC 5546 §2.1.5)
+  if (existing) {
+    const newComponents = [...getComps(cal, "VEVENT"), ...getComps(cal, "VTODO")];
+    const newSeq = newComponents.length > 0 ? parseInt(getProp(newComponents[0], "SEQUENCE")?.value ?? "0", 10) : 0;
+    try {
+      const storedCal = parseICS(existing.ics);
+      const storedComponents = [...getComps(storedCal, "VEVENT"), ...getComps(storedCal, "VTODO")];
+      const storedSeq = storedComponents.length > 0 ? parseInt(getProp(storedComponents[0], "SEQUENCE")?.value ?? "0", 10) : 0;
+      if (newSeq < storedSeq) {
+        return respond(412, "Precondition Failed: SEQUENCE is lower than stored object");
+      }
+    } catch {
+      // Ignore parse errors on stored content
+    }
   }
 
   const obj = await storage.putObject(colName, uid, ics, icalUID);
@@ -308,6 +427,9 @@ async function handlePropfind(
 ): Promise<Response> {
   const depth = parseDepth(req.headers.get("Depth"));
   const body = await req.text();
+  if (body.trim() && !isWellFormedXML(body)) {
+    return respond(400, "Malformed XML request body");
+  }
   const pfReq = parsePropfind(body);
 
   const responses: string[] = [];
@@ -371,7 +493,11 @@ async function handlePropfind(
       return respond(404, "Not found");
   }
 
-  return xmlResponse(207, multiStatusXML(responses));
+  const extraHeaders: Record<string, string> = {};
+  if (resType === "collection" && !path.endsWith("/")) {
+    extraHeaders["Content-Location"] = path + "/";
+  }
+  return xmlResponse(207, multiStatusXML(responses), extraHeaders);
 }
 
 // ─── Property maps ────────────────────────────────────────────────────────────
@@ -381,6 +507,52 @@ type PropMap = Map<string, string>; // key: "ns:local", value: XML string
 function makeKey(ns: string, local: string): string {
   return `${ns}:${local}`;
 }
+
+const PROTECTED_PROPS = new Set([
+  makeKey("DAV:", "getetag"),
+  makeKey("DAV:", "getlastmodified"),
+  makeKey("DAV:", "getcontentlength"),
+  makeKey("DAV:", "getcontenttype"),
+  makeKey("DAV:", "resourcetype"),
+  makeKey("DAV:", "creationdate"),
+  makeKey("DAV:", "current-user-principal"),
+  makeKey("DAV:", "lockdiscovery"),
+  makeKey("DAV:", "supportedlock"),
+  makeKey("DAV:", "sync-token"),
+  makeKey("DAV:", "supported-report-set"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "supported-calendar-component-set"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "supported-calendar-data"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "max-resource-size"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "min-date-time"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "max-date-time"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "max-instances"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "max-attendees-per-instance"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "supported-collation-set"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "managed-attachments-server-URL"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "max-attachment-size"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "max-attachments-per-resource"),
+]);
+
+// Keys excluded from DAV:allprop (RFC 4791 §7.1, RFC 6578 §4)
+const ALLPROP_EXCLUDED = new Set([
+  makeKey("DAV:", "sync-token"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "calendar-data"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "calendar-description"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "supported-calendar-data"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "supported-calendar-component-set"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "max-resource-size"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "min-date-time"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "max-date-time"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "max-instances"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "max-attendees-per-instance"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "calendar-timezone-id"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "schedule-calendar-transp"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "supported-collation-set"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "calendar-home-set"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "calendar-user-address-set"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "calendar-availability"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "calendar-timezone"),
+]);
 
 function principalProps(config: Config): PropMap {
   const m = new Map<string, string>();
@@ -401,6 +573,16 @@ function principalProps(config: Config): PropMap {
       C("calendar-user-address-set", D("href", `mailto:${config.user.email}`)),
     );
   }
+  m.set(
+    makeKey("DAV:", "supported-privilege-set"),
+    D(
+      "supported-privilege-set",
+      D("supported-privilege", D("privilege", D("all")) + D("description", "All privileges")) +
+      D("supported-privilege", D("privilege", D("read")) + D("description", "Read")) +
+      D("supported-privilege", D("privilege", D("write")) + D("description", "Write")) +
+      D("supported-privilege", D("privilege", C("read-free-busy")) + D("description", "Read free/busy")),
+    ),
+  );
   return m;
 }
 
@@ -412,7 +594,7 @@ function calendarHomeProps(syncToken: string): PropMap {
     makeKey("DAV:", "current-user-principal"),
     D("current-user-principal", D("href", PRINCIPAL_PATH)),
   );
-  m.set(makeKey("DAV:", "sync-token"), D("sync-token", syncToken));
+  m.set(makeKey("DAV:", "sync-token"), D("sync-token", wrapSyncToken(syncToken)));
   m.set(makeKey("DAV:", "creationdate"), D("creationdate", new Date().toISOString()));
   return m;
 }
@@ -434,8 +616,26 @@ function collectionProps(
     makeKey("DAV:", "current-user-principal"),
     D("current-user-principal", D("href", PRINCIPAL_PATH)),
   );
-  m.set(makeKey("DAV:", "sync-token"), D("sync-token", syncToken));
+  m.set(makeKey("DAV:", "sync-token"), D("sync-token", wrapSyncToken(syncToken)));
   m.set(makeKey("DAV:", "creationdate"), D("creationdate", new Date().toISOString()));
+  m.set(
+    makeKey("DAV:", "supported-report-set"),
+    D(
+      "supported-report-set",
+      D("supported-report", D("report", C("calendar-query"))) +
+        D("supported-report", D("report", C("calendar-multiget"))) +
+        D("supported-report", D("report", C("free-busy-query"))) +
+        D("supported-report", D("report", D("sync-collection"))) +
+        D("supported-report", D("report", D("expand-property"))),
+    ),
+  );
+  m.set(
+    makeKey("urn:ietf:params:xml:ns:caldav", "supported-collation-set"),
+    C(
+      "supported-collation-set",
+      C("supported-collation", "i;ascii-casemap") + C("supported-collation", "i;octet"),
+    ),
+  );
   m.set(
     makeKey("urn:ietf:params:xml:ns:caldav", "calendar-description"),
     C("calendar-description"),
@@ -451,7 +651,7 @@ function collectionProps(
     makeKey("urn:ietf:params:xml:ns:caldav", "supported-calendar-component-set"),
     C(
       "supported-calendar-component-set",
-      Cattr("comp", { name: "VEVENT" }) + Cattr("comp", { name: "VTODO" }),
+      Cattr("comp", { name: "VEVENT" }) + Cattr("comp", { name: "VTODO" }) + Cattr("comp", { name: "VAVAILABILITY" }),
     ),
   );
   m.set(
@@ -471,34 +671,42 @@ function collectionProps(
     makeKey("urn:ietf:params:xml:ns:caldav", "max-attendees-per-instance"),
     C("max-attendees-per-instance", "100"),
   );
+  const defaultTzId = config?.user.timezone ?? "UTC";
   m.set(
     makeKey("urn:ietf:params:xml:ns:caldav", "calendar-timezone-id"),
-    C("calendar-timezone-id", config?.user.timezone ?? "UTC"),
+    C("calendar-timezone-id", defaultTzId),
+  );
+  m.set(
+    makeKey("urn:ietf:params:xml:ns:caldav", "calendar-timezone"),
+    C(
+      "calendar-timezone",
+      escapeXmlCDATA(
+        `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTIMEZONE\r\nTZID:${defaultTzId}\r\nEND:VTIMEZONE\r\nEND:VCALENDAR\r\n`,
+      ),
+    ),
   );
   m.set(
     makeKey("urn:ietf:params:xml:ns:caldav", "schedule-calendar-transp"),
     C("schedule-calendar-transp", C("opaque")),
   );
+  m.set(
+    makeKey("DAV:", "supported-privilege-set"),
+    D(
+      "supported-privilege-set",
+      D("supported-privilege", D("privilege", D("all")) + D("description", "All privileges")) +
+      D("supported-privilege", D("privilege", D("read")) + D("description", "Read")) +
+      D("supported-privilege", D("privilege", D("write")) + D("description", "Write")) +
+      D("supported-privilege", D("privilege", C("read-free-busy")) + D("description", "Read free/busy")),
+    ),
+  );
 
-  // Apply stored custom property overrides
+  // Apply stored custom property overrides (rawValue is always a full XML element)
   for (const [key, rawValue] of Object.entries(customProps)) {
-    const colonIdx = key.indexOf(":");
-    if (colonIdx < 0) continue;
-    const ns = key.slice(0, colonIdx);
-    const local = key.slice(colonIdx + 1);
-    const existing = m.get(makeKey(ns, local));
-    if (existing !== undefined) {
-      // Re-use the XML element wrapper, replace just the text content
-      const openTag = existing.indexOf(">") + 1;
-      const closeTag = existing.lastIndexOf("<");
-      if (openTag > 0 && closeTag > openTag) {
-        m.set(makeKey(ns, local), existing.slice(0, openTag) + escapeXmlCDATA(rawValue) + existing.slice(closeTag));
-      }
-    } else {
-      // Unknown prop: store as a generic element
-      const localEl = local.replace(/[^a-zA-Z0-9_-]/g, "_");
-      m.set(makeKey(ns, local), `<X:${localEl} xmlns:X="${ns}">${escapeXmlCDATA(rawValue)}</X:${localEl}>`);
-    }
+    const idx = key.indexOf("\x00");
+    if (idx < 0) continue;
+    const ns = key.slice(0, idx);
+    const local = key.slice(idx + 1);
+    m.set(makeKey(ns, local), rawValue);
   }
 
   return m;
@@ -509,6 +717,7 @@ function objectPropsMap(
   lastModified: Date,
   contentLength: number,
   ics: string,
+  deadProps: Record<string, string> = {},
 ): PropMap {
   const m = new Map<string, string>();
   m.set(makeKey("DAV:", "resourcetype"), D("resourcetype")); // not a collection
@@ -531,6 +740,16 @@ function objectPropsMap(
     makeKey("urn:ietf:params:xml:ns:caldav", "calendar-data"),
     C("calendar-data", escapeXmlCDATA(ics)),
   );
+
+  // Add dead props
+  for (const [key, rawXml] of Object.entries(deadProps)) {
+    const idx = key.indexOf("\x00");
+    if (idx < 0) continue;
+    const ns = key.slice(0, idx);
+    const local = key.slice(idx + 1);
+    m.set(makeKey(ns, local), rawXml);
+  }
+
   return m;
 }
 
@@ -542,7 +761,10 @@ function escapeXmlCDATA(s: string): string {
 
 function buildPropsResponse(href: string, props: PropMap, pfReq: PropFindRequest): string {
   if (pfReq.type === "allprop") {
-    const allProps = Array.from(props.values()).join("");
+    const allProps = Array.from(props.entries())
+      .filter(([k]) => !ALLPROP_EXCLUDED.has(k))
+      .map(([, v]) => v)
+      .join("");
     return responseXML(href, [{ props: allProps, status: 200 }]);
   }
 
@@ -615,17 +837,25 @@ function buildCollectionResponse(
 
 function buildObjectResponse(
   href: string,
-  obj: { etag: string; lastModified: Date; contentLength: number; ics: string },
+  obj: { etag: string; lastModified: Date; contentLength: number; ics: string; deadProps?: Record<string, string> },
   pfReq: PropFindRequest,
+  noTimezones = false,
 ): string {
+  const ics = noTimezones ? stripKnownVTimezones(obj.ics) : obj.ics;
+  const contentLength = noTimezones ? new TextEncoder().encode(ics).length : obj.contentLength;
   return buildPropsResponse(
     href,
-    objectPropsMap(obj.etag, obj.lastModified, obj.contentLength, obj.ics),
+    objectPropsMap(obj.etag, obj.lastModified, contentLength, ics, obj.deadProps ?? {}),
     pfReq,
   );
 }
 
 // ─── PROPPATCH ────────────────────────────────────────────────────────────────
+
+function ppStatusText(code: number): string {
+  const map: Record<number, string> = { 200: "OK", 403: "Forbidden", 424: "Failed Dependency" };
+  return map[code] ?? "Unknown";
+}
 
 async function handleProppatch(
   req: Request,
@@ -648,26 +878,120 @@ async function handleProppatch(
   }
 
   const body = await req.text();
+  if (body.trim() && !isWellFormedXML(body)) {
+    return respond(400, "Malformed XML request body");
+  }
   const ops = parseProppatch(body);
 
-  // Persist all writable collection properties
-  if (resType === "collection") {
-    const colName = collectionNameFromPath(path);
-    for (const op of ops) {
-      if (op.type === "set") {
-        if (op.local === "displayname") {
-          await storage.updateCalendarDisplayName(colName, op.value);
-        } else {
-          await storage.updateCalendarProp(colName, `${op.ns}:${op.local}`, op.value);
+  // Check for protected props
+  const hasProtected = ops.some((op) => op.type === "set" && PROTECTED_PROPS.has(makeKey(op.ns, op.local)));
+
+  // Validate calendar-availability value (RFC 7953 §7.2.4: must contain exactly one VAVAILABILITY)
+  for (const op of ops) {
+    if (op.type === "set" && op.ns === "urn:ietf:params:xml:ns:caldav" && op.local === "calendar-availability") {
+      const val = op.value.trim();
+      try {
+        const avCal = parseICS(val);
+        const vavails = getComps(avCal, "VAVAILABILITY");
+        // Must have exactly one VAVAILABILITY and no other component types (aside from VTIMEZONE)
+        const nonVtz = avCal.children.filter((c) => c.name !== "VTIMEZONE" && c.name !== "VAVAILABILITY");
+        if (vavails.length !== 1 || nonVtz.length > 0) {
+          return xmlResponse(
+            409,
+            '<?xml version="1.0" encoding="UTF-8"?><D:error xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><C:valid-calendar-data/></D:error>',
+          );
+        }
+      } catch {
+        return xmlResponse(
+          409,
+          '<?xml version="1.0" encoding="UTF-8"?><D:error xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><C:valid-calendar-data/></D:error>',
+        );
+      }
+    }
+  }
+
+  // Validate calendar-timezone-id value (RFC 7809 §3.1.5: must be a known timezone ID)
+  for (const op of ops) {
+    if (op.type === "set" && op.ns === "urn:ietf:params:xml:ns:caldav" && op.local === "calendar-timezone-id") {
+      const tzId = op.value.trim();
+      if (tzId.startsWith("X-")) {
+        return xmlResponse(403, buildPreconditionError("valid-timezone"));
+      }
+    }
+  }
+
+  // Validate calendar-timezone value (must contain a VTIMEZONE component)
+  // Also accepts standalone VTIMEZONE (without VCALENDAR wrapper) and \n-escaped line breaks.
+  for (const op of ops) {
+    if (op.type === "set" && op.ns === "urn:ietf:params:xml:ns:caldav" && op.local === "calendar-timezone") {
+      const val = op.value.trim().replace(/\\n/g, "\n");
+      const hasTz = val.includes("BEGIN:VTIMEZONE");
+      if (!hasTz) {
+        return xmlResponse(
+          409,
+          '<?xml version="1.0" encoding="UTF-8"?><D:error xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><C:valid-calendar-data/></D:error>',
+        );
+      }
+    }
+  }
+
+  if (!hasProtected) {
+    // Persist all writable properties
+    if (resType === "collection") {
+      const colName = collectionNameFromPath(path);
+      for (const op of ops) {
+        if (op.type === "set") {
+          if (op.ns === "DAV:" && op.local === "displayname") {
+            await storage.updateCalendarDisplayName(colName, op.value);
+          } else {
+            await storage.updateCalendarProp(colName, `${op.ns}\x00${op.local}`, op.rawXml);
+          }
+          // RFC 7809 §3.1.5: keep calendar-timezone and calendar-timezone-id in sync
+          if (op.ns === "urn:ietf:params:xml:ns:caldav" && op.local === "calendar-timezone") {
+            const normalized = op.value.trim().replace(/\\n/g, "\n");
+            const tzidMatch = normalized.match(/TZID:([^\r\n;:]+)/);
+            const extractedTzId = tzidMatch?.[1]?.trim();
+            if (extractedTzId) {
+              const tzIdXml = `<C:calendar-timezone-id xmlns:C="urn:ietf:params:xml:ns:caldav">${esc(extractedTzId)}</C:calendar-timezone-id>`;
+              await storage.updateCalendarProp(colName, `urn:ietf:params:xml:ns:caldav\x00calendar-timezone-id`, tzIdXml);
+            }
+          }
+          if (op.ns === "urn:ietf:params:xml:ns:caldav" && op.local === "calendar-timezone-id") {
+            const tzId = op.value.trim();
+            if (tzId) {
+              const tzICS = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTIMEZONE\r\nTZID:${tzId}\r\nEND:VTIMEZONE\r\nEND:VCALENDAR\r\n`;
+              const tzXml = `<C:calendar-timezone xmlns:C="urn:ietf:params:xml:ns:caldav">${escapeXmlCDATA(tzICS)}</C:calendar-timezone>`;
+              await storage.updateCalendarProp(colName, `urn:ietf:params:xml:ns:caldav\x00calendar-timezone`, tzXml);
+            }
+          }
+        }
+      }
+    } else if (resType === "object") {
+      const colName = collectionNameFromPath(path);
+      const uid = objectUIDFromPath(path);
+      for (const op of ops) {
+        if (op.type === "set") {
+          await storage.updateObjectProp(colName, uid, `${op.ns}\x00${op.local}`, op.rawXml);
         }
       }
     }
   }
 
-  // Return 207 accepting all property updates
+  // Build propstat entries
   const propstats = ops.map((op) => {
     const el = buildEmptyProp(op.ns, op.local);
-    return `<D:propstat><D:prop>${el}</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>`;
+    const isProtected = op.type === "set" && PROTECTED_PROPS.has(makeKey(op.ns, op.local));
+    let statusCode: number;
+    let errorXml = "";
+    if (isProtected) {
+      statusCode = 403;
+      errorXml = `<D:error><D:cannot-modify-protected-property/></D:error>`;
+    } else if (hasProtected) {
+      statusCode = 424;
+    } else {
+      statusCode = 200;
+    }
+    return `<D:propstat><D:prop>${el}</D:prop><D:status>HTTP/1.1 ${statusCode} ${ppStatusText(statusCode)}</D:status>${errorXml}</D:propstat>`;
   });
 
   const respBody =
@@ -683,11 +1007,22 @@ async function handleProppatch(
 // ─── MKCOL / MKCALENDAR ───────────────────────────────────────────────────────
 
 async function handleMkcol(
+  req: Request,
   path: string,
   resType: ResourceType,
   storage: Storage,
-  _isMkcalendar: boolean,
+  isMkcalendar: boolean,
 ): Promise<Response> {
+  // Check body content-type
+  const reqBody = await req.text();
+  const ct = req.headers.get("Content-Type") ?? "";
+  if (reqBody.length > 0) {
+    const mime = ct.split(";")[0].trim().toLowerCase();
+    if (mime !== "application/xml" && mime !== "text/xml") {
+      return respond(415, "Unsupported Media Type");
+    }
+  }
+
   // Only allow creating at depth 3 (calendar collection level)
   if (resType !== "collection") {
     if (resType === "unknown" || resType === "object") {
@@ -708,8 +1043,245 @@ async function handleMkcol(
     return respond(405, "Method Not Allowed: collection already exists");
   }
 
-  await storage.createCalendar(colName, colName);
-  return respond(201);
+  // Parse MKCALENDAR body to extract displayname and calendar-description
+  let displayName = colName;
+  let calDescription: string | undefined;
+  if (isMkcalendar && reqBody.length > 0) {
+    const dnMatch = reqBody.match(/<[^:>]*:?displayname[^>]*>([^<]*)<\/[^>]*:?displayname>/);
+    if (dnMatch) displayName = dnMatch[1];
+    const descMatch = reqBody.match(/<[^:>]*:?calendar-description[^>]*>([^<]*)<\/[^>]*:?calendar-description>/);
+    if (descMatch) calDescription = descMatch[1];
+  }
+
+  await storage.createCalendar(colName, displayName);
+  if (calDescription !== undefined) {
+    const key = `urn:ietf:params:xml:ns:caldav\x00calendar-description`;
+    await storage.updateCalendarProp(colName, key, C("calendar-description", calDescription));
+  }
+  return respond(201, "", isMkcalendar ? { "Cache-Control": "no-cache" } : {});
+}
+
+// ─── COPY ─────────────────────────────────────────────────────────────────────
+
+async function handleCopy(
+  req: Request,
+  path: string,
+  resType: ResourceType,
+  storage: Storage,
+): Promise<Response> {
+  const destHeader = req.headers.get("Destination");
+  if (!destHeader) return respond(400, "Destination header required");
+
+  let destPath: string;
+  try {
+    const destUrl = new URL(destHeader);
+    destPath = decodeURIComponent(destUrl.pathname);
+  } catch {
+    destPath = destHeader;
+  }
+
+  if (path === destPath) return respond(403, "Source and destination are the same");
+
+  const overwrite = req.headers.get("Overwrite") ?? "T";
+
+  if (resType !== "object") {
+    return respond(403, "COPY only supported for calendar objects");
+  }
+
+  const srcCol = collectionNameFromPath(path);
+  const srcUid = objectUIDFromPath(path);
+  const src = await storage.getObject(srcCol, srcUid);
+  if (!src) return respond(404, "Source not found");
+
+  const dstResType = resourceTypeAtPath(destPath);
+  if (dstResType !== "object") return respond(409, "Invalid destination path");
+
+  const dstCol = collectionNameFromPath(destPath);
+  const dstUid = objectUIDFromPath(destPath);
+
+  const dstCalendar = await storage.getCalendar(dstCol);
+  if (!dstCalendar) return respond(409, "Destination collection does not exist");
+
+  const existingDst = await storage.getObject(dstCol, dstUid);
+  if (existingDst && overwrite === "F") return respond(412, "Precondition Failed: destination exists");
+
+  await storage.copyObject(srcCol, srcUid, dstCol, dstUid);
+  return respond(existingDst ? 204 : 201);
+}
+
+// ─── MOVE ─────────────────────────────────────────────────────────────────────
+
+async function handleMove(
+  req: Request,
+  path: string,
+  resType: ResourceType,
+  storage: Storage,
+): Promise<Response> {
+  const destHeader = req.headers.get("Destination");
+  if (!destHeader) return respond(400, "Destination header required");
+
+  let destPath: string;
+  try {
+    const destUrl = new URL(destHeader);
+    destPath = decodeURIComponent(destUrl.pathname);
+  } catch {
+    destPath = destHeader;
+  }
+
+  if (path === destPath) return respond(403, "Source and destination are the same");
+
+  const overwrite = req.headers.get("Overwrite") ?? "T";
+
+  if (resType !== "object") {
+    return respond(403, "MOVE only supported for calendar objects");
+  }
+
+  const srcCol = collectionNameFromPath(path);
+  const srcUid = objectUIDFromPath(path);
+  const src = await storage.getObject(srcCol, srcUid);
+  if (!src) return respond(404, "Source not found");
+
+  const dstResType = resourceTypeAtPath(destPath);
+  if (dstResType !== "object") return respond(409, "Invalid destination path");
+
+  const dstCol = collectionNameFromPath(destPath);
+  const dstUid = objectUIDFromPath(destPath);
+
+  const dstCalendar = await storage.getCalendar(dstCol);
+  if (!dstCalendar) return respond(409, "Destination collection does not exist");
+
+  const existingDst = await storage.getObject(dstCol, dstUid);
+  if (existingDst && overwrite === "F") return respond(412, "Precondition Failed: destination exists");
+
+  await storage.moveObject(srcCol, srcUid, dstCol, dstUid);
+  return respond(existingDst ? 204 : 201);
+}
+
+// ─── POST (RFC 8607 managed attachments) ──────────────────────────────────────
+
+async function handlePost(
+  req: Request,
+  path: string,
+  resType: ResourceType,
+  storage: Storage,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const action = url.searchParams.get("action");
+  const managedId = url.searchParams.get("managed-id");
+  const rid = url.searchParams.get("rid");
+
+  // Only object-level POST is supported (attachment management)
+  if (resType !== "object") {
+    return respond(405, "Method not allowed");
+  }
+
+  const colName = collectionNameFromPath(path);
+  const uid = objectUIDFromPath(path);
+  const obj = await storage.getObject(colName, uid);
+  if (!obj) return respond(404, "Not found");
+
+  const VALID_ACTIONS = new Set(["attachment-add", "attachment-update", "attachment-remove"]);
+
+  if (!action || !VALID_ACTIONS.has(action)) {
+    return xmlResponse(403, buildPreconditionError("valid-action"));
+  }
+
+  if (action === "attachment-add" && managedId) {
+    // RFC 8607 §3.3.3: attachment-add MUST NOT carry a managed-id parameter
+    return xmlResponse(403, buildPreconditionError("valid-managed-id"));
+  }
+
+  // calendar-managed-attachments-no-recurrence: reject per-instance ops (rid= parameter)
+  if (rid) {
+    return xmlResponse(403, buildPreconditionError("valid-rid"));
+  }
+
+  if (action === "attachment-remove") {
+    if (!managedId) {
+      return xmlResponse(403, buildPreconditionError("valid-managed-id"));
+    }
+    const removedICS = icsRemoveAttach(obj.ics, managedId);
+    if (removedICS === null) {
+      return xmlResponse(403, buildPreconditionError("valid-managed-id"));
+    }
+    await storage.putObject(colName, uid, removedICS, obj.icalUID);
+    return respond(204);
+  }
+
+  // attachment-add / attachment-update
+  const body = await req.text();
+  const contentType = req.headers.get("Content-Type") ?? "application/octet-stream";
+  const contentDisposition = req.headers.get("Content-Disposition") ?? "";
+  const filenameMatch = contentDisposition.match(/filename=([^\s;]+)/);
+  const filename = filenameMatch ? filenameMatch[1].replace(/^"|"$/g, "") : "";
+  const size = new TextEncoder().encode(body).length;
+  const assignedManagedId = `mgid-${crypto.randomUUID()}`;
+
+  let updatedICS: string;
+  if (action === "attachment-update" && managedId) {
+    const replaced = icsReplaceAttach(obj.ics, managedId, assignedManagedId, contentType, filename, size);
+    updatedICS = replaced ?? icsAddAttach(obj.ics, assignedManagedId, contentType, filename, size);
+  } else {
+    updatedICS = icsAddAttach(obj.ics, assignedManagedId, contentType, filename, size);
+  }
+
+  await storage.putObject(colName, uid, updatedICS, obj.icalUID);
+  return respond(201, "", { "Cal-Managed-ID": assignedManagedId });
+}
+
+function icsAddAttach(ics: string, managedId: string, fmttype: string, filename: string, size: number): string {
+  const attachLine = buildAttachLine(managedId, fmttype, filename, size);
+  const eol = ics.includes("\r\n") ? "\r\n" : "\n";
+  for (const compEnd of ["END:VEVENT", "END:VTODO"]) {
+    const idx = ics.indexOf(compEnd);
+    if (idx >= 0) {
+      return ics.slice(0, idx) + attachLine + eol + ics.slice(idx);
+    }
+  }
+  return ics;
+}
+
+function icsRemoveAttach(ics: string, managedId: string): string | null {
+  const eol = ics.includes("\r\n") ? "\r\n" : "\n";
+  const lines = ics.split(eol);
+  let found = false;
+  const result: string[] = [];
+  let skip = false;
+  for (const line of lines) {
+    const unfolded = line.trimStart();
+    if (!skip) {
+      const propLine = unfolded.toUpperCase().startsWith("ATTACH") ? unfolded : line;
+      if (propLine.toUpperCase().startsWith("ATTACH") && propLine.toUpperCase().includes("MANAGED-ID=" + managedId.toUpperCase())) {
+        found = true;
+        skip = true;
+        continue;
+      }
+      result.push(line);
+    } else {
+      // Skip continuation (folded) lines — they start with whitespace
+      if (line.startsWith(" ") || line.startsWith("\t")) {
+        continue;
+      }
+      skip = false;
+      result.push(line);
+    }
+  }
+  if (!found) return null;
+  return result.join(eol);
+}
+
+function icsReplaceAttach(ics: string, oldManagedId: string, newManagedId: string, fmttype: string, filename: string, size: number): string | null {
+  const removed = icsRemoveAttach(ics, oldManagedId);
+  if (removed === null) return null;
+  return icsAddAttach(removed, newManagedId, fmttype, filename, size);
+}
+
+function buildAttachLine(managedId: string, fmttype: string, filename: string, size: number): string {
+  let params = `MANAGED-ID=${managedId}`;
+  if (fmttype) params += `;FMTTYPE=${fmttype}`;
+  if (filename) params += `;FILENAME=${filename}`;
+  params += `;SIZE=${size}`;
+  return `ATTACH;${params}:data:${fmttype};base64,`;
 }
 
 // ─── REPORT ───────────────────────────────────────────────────────────────────
@@ -721,20 +1293,66 @@ async function handleReport(
   storage: Storage,
 ): Promise<Response> {
   const body = await req.text();
+  if (body.trim() && !isWellFormedXML(body)) {
+    return respond(400, "Malformed XML request body");
+  }
   const report = parseReport(body);
+
+  const noTimezones = (req.headers.get("CalDAV-Timezones") ?? "").toUpperCase() === "F";
 
   switch (report.type) {
     case "calendar-query":
-      return await handleCalendarQuery(path, resType, report.query, storage);
+      return await handleCalendarQuery(path, resType, report.query, storage, noTimezones);
     case "calendar-multiget":
-      return await handleCalendarMultiget(report.multiget, storage);
+      return await handleCalendarMultiget(report.multiget, storage, noTimezones);
     case "sync-collection":
-      return await handleSyncCollection(path, resType, report.sync, storage);
+      return await handleSyncCollection(req, path, resType, report.sync, storage);
     case "free-busy-query":
-      return handleFreeBusyQuery();
+      return await handleFreeBusyQuery(req, path, resType, report.start, report.end, storage);
+    case "expand-property":
+      return xmlResponse(207, multiStatusXML([]));
     default:
       return respond(400, "Unknown REPORT type");
   }
+}
+
+const SUPPORTED_COLLATIONS = new Set(["i;ascii-casemap", "i;octet"]);
+
+// Properties that may legally have a time-range in prop-filter (RFC 4791 §9.6.4)
+const DATE_TIME_PROPS = new Set([
+  "DTSTART", "DTEND", "DUE", "COMPLETED", "CREATED", "LAST-MODIFIED",
+  "RECURRENCE-ID", "TRIGGER",
+]);
+
+function hasUnsupportedCollation(cf: CompFilter): string | null {
+  for (const pf of cf.props) {
+    if (pf.textMatch?.collation && !SUPPORTED_COLLATIONS.has(pf.textMatch.collation)) {
+      return pf.textMatch.collation;
+    }
+    for (const param of pf.paramFilters) {
+      if (param.textMatch?.collation && !SUPPORTED_COLLATIONS.has(param.textMatch.collation)) {
+        return param.textMatch.collation;
+      }
+    }
+  }
+  for (const child of cf.comps) {
+    const found = hasUnsupportedCollation(child);
+    if (found) return found;
+  }
+  return null;
+}
+
+function hasInvalidFilter(cf: CompFilter): boolean {
+  for (const pf of cf.props) {
+    // time-range in prop-filter is only valid for date/time-valued properties
+    if ((pf.start || pf.end) && !DATE_TIME_PROPS.has(pf.name.toUpperCase())) {
+      return true;
+    }
+  }
+  for (const child of cf.comps) {
+    if (hasInvalidFilter(child)) return true;
+  }
+  return false;
 }
 
 async function handleCalendarQuery(
@@ -742,7 +1360,29 @@ async function handleCalendarQuery(
   resType: ResourceType,
   query: CalendarQuery,
   storage: Storage,
+  noTimezones = false,
 ): Promise<Response> {
+  // RFC 7809 §3.1.6: validate timezone-id if supplied
+  if (query.timezoneId && query.timezoneId.startsWith("X-")) {
+    return xmlResponse(403, buildPreconditionError("valid-timezone"));
+  }
+
+  // Validate collation
+  const badCollation = hasUnsupportedCollation(query.filter);
+  if (badCollation) {
+    return xmlResponse(
+      403,
+      '<?xml version="1.0" encoding="UTF-8"?><D:error xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><C:supported-collation/></D:error>',
+    );
+  }
+  // Validate filter structure (e.g. time-range on non-date props)
+  if (hasInvalidFilter(query.filter)) {
+    return xmlResponse(
+      403,
+      '<?xml version="1.0" encoding="UTF-8"?><D:error xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><C:valid-filter/></D:error>',
+    );
+  }
+
   // calendar-query must target a collection
   if (resType === "object") {
     // RFC 4791 §7.8: REPORT on a non-collection — return just this object if it matches
@@ -753,7 +1393,7 @@ async function handleCalendarQuery(
     const pfReq: PropFindRequest = { type: "prop", names: query.requestedProps };
     const responses: string[] = [];
     if (matchesFilter(obj.ics, query.filter)) {
-      responses.push(buildObjectResponse(obj.href, obj, pfReq));
+      responses.push(buildObjectResponse(obj.href, obj, pfReq, noTimezones));
     }
     return xmlResponse(207, multiStatusXML(responses));
   }
@@ -774,7 +1414,7 @@ async function handleCalendarQuery(
   const responses: string[] = [];
   for (const obj of objs) {
     if (matchesFilter(obj.ics, query.filter)) {
-      responses.push(buildObjectResponse(obj.href, obj, pfReq));
+      responses.push(buildObjectResponse(obj.href, obj, pfReq, noTimezones));
     }
   }
 
@@ -784,6 +1424,7 @@ async function handleCalendarQuery(
 async function handleCalendarMultiget(
   multiget: CalendarMultiget,
   storage: Storage,
+  noTimezones = false,
 ): Promise<Response> {
   const pfReq: PropFindRequest = multiget.allProp
     ? { type: "allprop" }
@@ -814,20 +1455,53 @@ async function handleCalendarMultiget(
       responses.push(responseXML(href, ps));
       continue;
     }
-    responses.push(buildObjectResponse(href, obj, pfReq));
+    responses.push(buildObjectResponse(href, obj, pfReq, noTimezones));
   }
 
   return xmlResponse(207, multiStatusXML(responses));
 }
 
 async function handleSyncCollection(
+  req: Request,
   path: string,
   resType: ResourceType,
   sync: SyncCollectionQuery,
   storage: Storage,
 ): Promise<Response> {
+  // RFC 6578 §3.3: Depth MUST be "0" for sync-collection REPORT
+  const depth = req.headers.get("Depth");
+  if (depth !== null && depth !== "0") {
+    return respond(400, "sync-collection REPORT requires Depth: 0");
+  }
+
+  // Handle calendar home: list current sub-collections
+  if (resType === "calendarHome") {
+    const cals = await storage.listCalendars();
+    const pfReq: PropFindRequest = sync.allProp
+      ? { type: "allprop" }
+      : { type: "prop", names: sync.requestedProps };
+    const responses: string[] = [];
+    for (const cal of cals) {
+      const rawToken = await storage.getSyncToken(cal.name);
+      responses.push(
+        buildPropsResponse(
+          cal.href,
+          collectionProps(cal.name, cal.displayName, rawToken, cal.customProps ?? {}),
+          pfReq,
+        ),
+      );
+    }
+    const respBody =
+      '<?xml version="1.0" encoding="UTF-8"?>\r\n' +
+      `<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">` +
+      responses.join("") +
+      D("sync-token", wrapSyncToken("0")) +
+      `</D:multistatus>`;
+    return xmlResponse(207, respBody);
+  }
+
   if (resType !== "collection") {
-    return respond(403, "sync-collection must target a calendar collection");
+    return respond(403, "sync-collection must target a calendar collection or home");
   }
 
   const colName = collectionNameFromPath(path);
@@ -838,7 +1512,9 @@ async function handleSyncCollection(
     ? { type: "allprop" }
     : { type: "prop", names: sync.requestedProps };
 
-  const syncResult = await storage.getChanges(colName, sync.syncToken);
+  // Unwrap URI token → raw number string before passing to storage
+  const rawToken = unwrapSyncToken(sync.syncToken);
+  const syncResult = await storage.getChanges(colName, rawToken);
   if (syncResult.invalidToken) {
     return xmlResponse(
       403,
@@ -851,7 +1527,8 @@ async function handleSyncCollection(
   for (const change of syncResult.changes) {
     const href = `/calstakk/calendars/${colName}/${change.uid}.ics`;
     if (change.type === "deleted") {
-      responses.push(notFoundResponseXML(href));
+      // RFC 6578 §3.5.2: removed member MUST have 404 status and MUST NOT include propstat
+      responses.push(D("response", D("href", href) + D("status", "HTTP/1.1 404 Not Found")));
     } else {
       const obj = await storage.getObject(colName, change.uid);
       if (obj) {
@@ -860,28 +1537,170 @@ async function handleSyncCollection(
     }
   }
 
-  // Include sync-token in the response
-  const syncTokenXML = D("sync-token", syncResult.newToken);
+  // sync-token goes DIRECTLY in multistatus (RFC 6578 §3.2), NOT in a response/propstat
   const respBody =
     '<?xml version="1.0" encoding="UTF-8"?>\r\n' +
     `<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">` +
     responses.join("") +
-    D("response", D("href", path) + D("propstat", D("prop", syncTokenXML) + D("status", "HTTP/1.1 200 OK"))) +
+    D("sync-token", wrapSyncToken(syncResult.newToken)) +
     `</D:multistatus>`;
 
   return xmlResponse(207, respBody);
 }
 
-function handleFreeBusyQuery(): Response {
-  // Return a minimal VFREEBUSY response
-  const freebusy =
-    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalStakk//CalDAV Server//EN\r\n" +
-    "BEGIN:VFREEBUSY\r\nDTSTAMP:" +
-    new Date().toISOString().replace(/[-:]/g, "").split(".")[0] +
-    "Z\r\nEND:VFREEBUSY\r\nEND:VCALENDAR\r\n";
+async function handleFreeBusyQuery(
+  _req: Request,
+  path: string,
+  resType: ResourceType,
+  queryStart: string,
+  queryEnd: string,
+  storage: Storage,
+): Promise<Response> {
+  if (resType === "object") {
+    return xmlResponse(
+      403,
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<D:error xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">' +
+        "<C:supported-filter/>" +
+        "</D:error>",
+    );
+  }
 
-  return new Response(freebusy, {
-    status: 200,
-    headers: { "Content-Type": "text/calendar; charset=utf-8" },
-  });
+  const colName = collectionNameFromPath(path);
+  const rangeStart = queryStart ? parseICalDateTimeForFB(queryStart) : null;
+  const rangeEnd = queryEnd ? parseICalDateTimeForFB(queryEnd) : null;
+
+  // Collect FREEBUSY periods from VAVAILABILITY objects in the collection
+  const freebusyLines: string[] = [];
+
+  // Helper: BUSYTYPE → FBTYPE string
+  function btToFbtype(busytype: string): string {
+    const bt = busytype.toUpperCase();
+    if (bt === "BUSY") return "BUSY";
+    if (bt === "BUSY-TENTATIVE") return "BUSY-TENTATIVE";
+    return "BUSY-UNAVAILABLE"; // default per RFC 7953 §3.2
+  }
+
+  // Collect VAVAILABILITY blocks: [{start, end, priority, busytype, availRanges}]
+  const blocks: Array<{ start: Date | null; end: Date | null; priority: number; busytype: string; availRanges: Array<{ s: Date; e: Date }> }> = [];
+
+  // From PUT objects
+  const objects = await storage.listObjects(colName);
+  for (const obj of objects) {
+    try {
+      const cal = parseICS(obj.ics);
+      for (const va of getComps(cal, "VAVAILABILITY")) {
+        const dtStart = getPropDate2(va, "DTSTART");
+        const dtEnd = getPropDate2(va, "DTEND");
+        const priorityProp = getProp(va, "PRIORITY");
+        const priority = priorityProp ? parseInt(priorityProp.value, 10) : 0;
+        const busytypeProp = getProp(va, "BUSYTYPE");
+        const busytype = busytypeProp?.value ?? "BUSY-UNAVAILABLE";
+        // AVAILABLE sub-components
+        const availRanges: Array<{ s: Date; e: Date }> = [];
+        for (const avail of getComps(va, "AVAILABLE")) {
+          const as = getPropDate2(avail, "DTSTART");
+          const ae = getPropDate2(avail, "DTEND");
+          if (as && ae) availRanges.push({ s: as, e: ae });
+        }
+        blocks.push({ start: dtStart, end: dtEnd, priority, busytype, availRanges });
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }
+
+  // Also check calendar-availability custom prop on the collection
+  const cal = await storage.getCalendar(colName);
+  if (cal) {
+    const caPropKey = `urn:ietf:params:xml:ns:caldav\x00calendar-availability`;
+    const caRaw = cal.customProps[caPropKey];
+    if (caRaw) {
+      // Extract ICS content from the XML element
+      const innerMatch = caRaw.match(/>([^<]*(?:BEGIN:VCALENDAR[\s\S]*?END:VCALENDAR))/);
+      const icsContent = innerMatch?.[1] ?? caRaw.replace(/<[^>]+>/g, "").trim();
+      try {
+        const avCal = parseICS(icsContent);
+        for (const va of getComps(avCal, "VAVAILABILITY")) {
+          const dtStart = getPropDate2(va, "DTSTART");
+          const dtEnd = getPropDate2(va, "DTEND");
+          const priorityProp = getProp(va, "PRIORITY");
+          const priority = priorityProp ? parseInt(priorityProp.value, 10) : 0;
+          const busytypeProp = getProp(va, "BUSYTYPE");
+          const busytype = busytypeProp?.value ?? "BUSY-UNAVAILABLE";
+          blocks.push({ start: dtStart, end: dtEnd, priority, busytype, availRanges: [] });
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  // Process blocks to generate FREEBUSY periods
+  const qStart = rangeStart ?? new Date(0);
+  const qEnd = rangeEnd ?? new Date(8.64e15);
+
+  for (const block of blocks) {
+    const windowStart = block.start ?? new Date(0);
+    const windowEnd = block.end ?? new Date(8.64e15);
+    // Does this VAVAILABILITY overlap the query range?
+    if (windowStart >= qEnd || windowEnd <= qStart) continue;
+
+    // Effective overlap of VAVAILABILITY window with query range
+    const effStart = windowStart > qStart ? windowStart : qStart;
+    const effEnd = windowEnd < qEnd ? windowEnd : qEnd;
+
+    const fbtype = btToFbtype(block.busytype);
+
+    // Subtract AVAILABLE sub-ranges: remaining intervals are busy
+    const busyIntervals = subtractIntervals(effStart, effEnd, block.availRanges);
+    for (const { s, e } of busyIntervals) {
+      freebusyLines.push(`FREEBUSY;FBTYPE=${fbtype}:${formatICalDateTime(s)}/${formatICalDateTime(e)}`);
+    }
+  }
+
+  // Build VFREEBUSY response
+  const dtstamp = new Date().toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+  let vfb = "BEGIN:VFREEBUSY\r\nDTSTAMP:" + dtstamp + "\r\n";
+  if (queryStart) vfb += "DTSTART:" + queryStart + "\r\n";
+  if (queryEnd) vfb += "DTEND:" + queryEnd + "\r\n";
+  for (const line of freebusyLines) vfb += line + "\r\n";
+  vfb += "END:VFREEBUSY\r\n";
+
+  const ical = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalStakk//CalDAV Server//EN\r\n" + vfb + "END:VCALENDAR\r\n";
+  return new Response(ical, { status: 200, headers: { "Content-Type": "text/calendar; charset=utf-8" } });
+}
+
+function subtractIntervals(
+  start: Date,
+  end: Date,
+  freeRanges: Array<{ s: Date; e: Date }>,
+): Array<{ s: Date; e: Date }> {
+  // Sort free ranges by start
+  const sorted = [...freeRanges].filter((r) => r.s < end && r.e > start).sort((a, b) => a.s.getTime() - b.s.getTime());
+  const result: Array<{ s: Date; e: Date }> = [];
+  let cur = start;
+  for (const fr of sorted) {
+    const frStart = fr.s > cur ? fr.s : cur;
+    if (frStart > cur) result.push({ s: cur, e: frStart });
+    if (fr.e > cur) cur = fr.e;
+    if (cur >= end) break;
+  }
+  if (cur < end) result.push({ s: cur, e: end });
+  return result;
+}
+
+function parseICalDateTimeForFB(s: string): Date {
+  if (s.length === 8) return new Date(Date.UTC(parseInt(s.slice(0, 4)), parseInt(s.slice(4, 6)) - 1, parseInt(s.slice(6, 8))));
+  return new Date(Date.UTC(parseInt(s.slice(0, 4)), parseInt(s.slice(4, 6)) - 1, parseInt(s.slice(6, 8)), parseInt(s.slice(9, 11)), parseInt(s.slice(11, 13)), parseInt(s.slice(13, 15))));
+}
+
+function formatICalDateTime(d: Date): string {
+  return d.toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "").replace("T", "T").slice(0, 15) + "Z";
+}
+
+function getPropDate2(comp: ICalComponent, name: string): Date | null {
+  const prop = getProp(comp, name);
+  if (!prop) return null;
+  try { return parseICalDateTimeForFB(prop.value); } catch { return null; }
 }
