@@ -98,7 +98,7 @@ export function TodayPage() {
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <div style={{ fontSize: 13, color: '#3A3A46' }}>Loading…</div>
+        <div style={{ fontSize: 13, color: 'var(--ui-text-muted)' }}>Loading…</div>
       </div>
     )
   }
@@ -110,16 +110,16 @@ export function TodayPage() {
       {/* Heading */}
       <div style={{ marginBottom: 32 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-          <h1 style={{ fontSize: 22, fontWeight: 600, color: 'rgba(255,255,255,0.88)', margin: 0 }}>
+          <h1 style={{ fontSize: 22, fontWeight: 600, color: 'var(--foreground)', margin: 0 }}>
             Today
           </h1>
-          <span style={{ fontSize: 13, color: '#52525E' }}>{todayLabel}</span>
+          <span style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>{todayLabel}</span>
         </div>
       </div>
 
       {isEmpty && (
         <div style={{ textAlign: 'center', paddingTop: 64 }}>
-          <p style={{ fontSize: 13, color: '#3A3A46' }}>Nothing scheduled for today.</p>
+          <p style={{ fontSize: 13, color: 'var(--ui-text-muted)' }}>Nothing scheduled for today.</p>
         </div>
       )}
 
@@ -137,16 +137,17 @@ export function TodayPage() {
                   gap: 12,
                   padding: '10px 14px',
                   borderRadius: 9,
-                  background: '#1F1F24',
+                  background: 'var(--card)',
+                  border: '1px solid var(--border)',
                   borderLeft: `3px solid ${event._colColor}`,
                 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.88)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <p style={{ fontSize: 13, fontWeight: 500, color: 'var(--foreground)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {event.summary}
                   </p>
                   {!event.all_day && event.start && (
-                    <p style={{ fontSize: 11, color: '#52525E', margin: '2px 0 0' }}>
+                    <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '2px 0 0' }}>
                       {fmtTime(event.start)}
                       {event.end ? ` — ${fmtTime(event.end)}` : ''}
                     </p>
@@ -163,14 +164,7 @@ export function TodayPage() {
       {todayTodos.length > 0 && (
         <section>
           <SectionLabel>Tasks</SectionLabel>
-          <div
-            style={{
-              background: '#1F1F24',
-              borderRadius: 10,
-              overflow: 'hidden',
-              border: '1px solid rgba(255,255,255,0.07)',
-            }}
-          >
+          <div className="cs-card" style={{ overflow: 'hidden' }}>
             {todayTodos.map((todo, i) => {
               const due = todo.due ? parseCalDate(todo.due) : null
               const overdue = due ? isBefore(due, startOfDay(now)) && !isToday(due) : false
@@ -184,7 +178,7 @@ export function TodayPage() {
                     padding: '10px 14px',
                     borderBottom:
                       i < todayTodos.length - 1
-                        ? '1px solid rgba(255,255,255,0.05)'
+                        ? '1px solid var(--border)'
                         : 'none',
                   }}
                 >
@@ -196,23 +190,23 @@ export function TodayPage() {
                       style={{
                         width: 16,
                         height: 16,
-                        color: overdue ? '#E35E5E' : todo._colColor,
+                        color: overdue ? 'var(--destructive)' : todo._colColor,
                       }}
                     />
                   </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontSize: 13, fontWeight: 400, color: 'rgba(255,255,255,0.88)', margin: 0 }}>
+                    <p style={{ fontSize: 13, fontWeight: 400, color: 'var(--foreground)', margin: 0 }}>
                       {todo.summary}
                     </p>
                     {todo.description && (
-                      <p style={{ fontSize: 11, color: '#52525E', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {todo.description}
                       </p>
                     )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                     {overdue && due && (
-                      <span style={{ fontSize: 11, color: '#E35E5E', fontWeight: 500 }}>
+                      <span style={{ fontSize: 11, color: 'var(--destructive)', fontWeight: 500 }}>
                         {fmtDateShort(due)}
                       </span>
                     )}
@@ -236,7 +230,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
         fontWeight: 600,
         letterSpacing: '0.08em',
         textTransform: 'uppercase',
-        color: '#3A3A46',
+        color: 'var(--ui-text-muted)',
         margin: '0 0 8px',
       }}
     >

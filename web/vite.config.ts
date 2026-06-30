@@ -15,7 +15,21 @@ export default defineConfig({
     proxy: {
       '/principals': 'http://localhost:5232',
       '/calendars': 'http://localhost:5232',
-      '/.well-known': 'http://localhost:5232',
+      // Rewrite absolute Location URLs in 308 redirect so the browser follows
+      // back through the Vite proxy instead of hitting :5232 directly (CORS).
+      '/.well-known': {
+        target: 'http://localhost:5232',
+        on: {
+          proxyRes: (proxyRes) => {
+            if (proxyRes.headers.location) {
+              proxyRes.headers.location = proxyRes.headers.location.replace(
+                'http://localhost:5232',
+                '',
+              )
+            }
+          },
+        },
+      },
     },
   },
 })

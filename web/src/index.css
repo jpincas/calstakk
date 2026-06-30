@@ -48,8 +48,65 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* ── Light theme (default) ─────────────────────────────────── */
 :root {
-    /* ── Dark base ────────────────────────────────────────────── */
+    --background: #F5F5F7;
+    --foreground: #111115;
+    --card: #FFFFFF;
+    --card-foreground: #111115;
+    --popover: #FFFFFF;
+    --popover-foreground: #111115;
+    --primary: #111115;
+    --primary-foreground: #FFFFFF;
+    --secondary: #E8E8EC;
+    --secondary-foreground: #3E3E4A;
+    --muted: #EBEBEF;
+    --muted-foreground: #8A8A96;
+    --accent: #E4E4E8;
+    --accent-foreground: #111115;
+    --destructive: #DC2626;
+    --border: rgba(0, 0, 0, 0.08);
+    --border-hover: rgba(0, 0, 0, 0.14);
+    --input: rgba(0, 0, 0, 0.06);
+    --ring: rgba(0, 0, 0, 0.15);
+    --chart-1: #6366F1;
+    --chart-2: #10B981;
+    --chart-3: #F59E0B;
+    --chart-4: #E35E5E;
+    --chart-5: #8B5CF6;
+    --radius: 0.5rem;
+
+    --sidebar: #EBEBEF;
+    --sidebar-foreground: #8A8A96;
+    --sidebar-primary: #111115;
+    --sidebar-primary-foreground: #FFFFFF;
+    --sidebar-accent: #E0E0E6;
+    --sidebar-accent-foreground: #111115;
+    --sidebar-border: rgba(0, 0, 0, 0.07);
+    --sidebar-ring: rgba(0, 0, 0, 0.15);
+
+    --nav: #FFFFFF;
+    --nav-border: rgba(0, 0, 0, 0.08);
+
+    --app-sidebar-width: 200px;
+    --app-nav-height: 44px;
+    --surface-shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 1px 2px rgb(0 0 0 / 0.04);
+    --surface-shadow-md: 0 4px 16px rgb(0 0 0 / 0.12), 0 2px 4px rgb(0 0 0 / 0.06);
+
+    /* Component tokens */
+    --ui-text-muted: #AAAAB8;
+    --hover-bg: rgba(0, 0, 0, 0.03);
+    --rbc-date-text: rgba(0, 0, 0, 0.4);
+    --rbc-date-offrange: rgba(0, 0, 0, 0.2);
+    --rbc-grid-border: rgba(0, 0, 0, 0.06);
+    --rbc-off-bg: #F0F0F4;
+    --rbc-header-bg: #F5F5F7;
+    --scrollbar-thumb: rgba(0, 0, 0, 0.12);
+    --scrollbar-thumb-hover: rgba(0, 0, 0, 0.2);
+}
+
+/* ── Dark theme ────────────────────────────────────────────── */
+:root.dark {
     --background: #18181C;
     --foreground: rgba(255, 255, 255, 0.88);
     --card: #1F1F24;
@@ -66,16 +123,10 @@
     --accent-foreground: rgba(255, 255, 255, 0.88);
     --destructive: #E35E5E;
     --border: rgba(255, 255, 255, 0.08);
+    --border-hover: rgba(255, 255, 255, 0.12);
     --input: rgba(255, 255, 255, 0.08);
     --ring: rgba(255, 255, 255, 0.2);
-    --chart-1: #6366F1;
-    --chart-2: #10B981;
-    --chart-3: #F59E0B;
-    --chart-4: #E35E5E;
-    --chart-5: #8B5CF6;
-    --radius: 0.5rem;
 
-    /* ── Sidebar ──────────────────────────────────────────────── */
     --sidebar: #141417;
     --sidebar-foreground: #8A8A96;
     --sidebar-primary: rgba(255, 255, 255, 0.88);
@@ -85,15 +136,21 @@
     --sidebar-border: rgba(255, 255, 255, 0.06);
     --sidebar-ring: rgba(255, 255, 255, 0.2);
 
-    /* ── Top nav ──────────────────────────────────────────────── */
     --nav: #0E0E11;
     --nav-border: rgba(255, 255, 255, 0.06);
 
-    /* ── App shell ────────────────────────────────────────────── */
-    --app-sidebar-width: 200px;
-    --app-nav-height: 44px;
     --surface-shadow: 0 1px 3px rgb(0 0 0 / 0.3), 0 1px 2px rgb(0 0 0 / 0.2);
     --surface-shadow-md: 0 4px 16px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.3);
+
+    --ui-text-muted: #3A3A46;
+    --hover-bg: rgba(255, 255, 255, 0.02);
+    --rbc-date-text: rgba(255, 255, 255, 0.4);
+    --rbc-date-offrange: rgba(255, 255, 255, 0.18);
+    --rbc-grid-border: rgba(255, 255, 255, 0.05);
+    --rbc-off-bg: #141417;
+    --rbc-header-bg: #18181C;
+    --scrollbar-thumb: rgba(255, 255, 255, 0.1);
+    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.18);
 }
 
 @layer base {
@@ -102,7 +159,7 @@
   html { @apply font-sans; }
 }
 
-/* ─── Nav button colored hover (uses per-item --btn-color) ── */
+/* ─── Nav button (colored hover via per-item --btn-color) ──── */
 .nav-btn {
   position: relative;
   display: flex;
@@ -112,7 +169,7 @@
   gap: 2px;
   padding: 5px 12px;
   border-radius: 8px;
-  color: #3A3A46;
+  color: var(--ui-text-muted);
   background: transparent;
   transition: color 120ms ease, background 120ms ease;
   cursor: pointer;
@@ -136,7 +193,7 @@
   width: 100%;
   padding: 6px 10px;
   border-radius: 7px;
-  color: #52525E;
+  color: var(--sidebar-foreground);
   background: transparent;
   transition: color 100ms, background 100ms;
   cursor: pointer;
@@ -145,12 +202,12 @@
   user-select: none;
 }
 .sidebar-row:hover {
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.7);
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
 }
 .sidebar-row[data-active="true"] {
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.88);
+  background: var(--sidebar-accent);
+  color: var(--sidebar-primary);
 }
 .sidebar-row-actions {
   display: none;
@@ -169,7 +226,7 @@
   width: 20px;
   height: 20px;
   border-radius: 4px;
-  color: #3A3A46;
+  color: var(--ui-text-muted);
   background: transparent;
   transition: color 100ms, background 100ms;
   border: none;
@@ -177,18 +234,18 @@
   padding: 0;
 }
 .sidebar-row-icon-btn:hover {
-  color: rgba(255, 255, 255, 0.7);
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--sidebar-accent-foreground);
+  background: var(--sidebar-accent);
 }
 .sidebar-row-icon-btn[data-active="true"] {
-  color: rgba(255, 255, 255, 0.88);
+  color: var(--sidebar-primary);
 }
 
-/* ─── React Big Calendar — dark theme ─────────────────────── */
+/* ─── React Big Calendar ──────────────────────────────────── */
 .rbc-calendar {
   font-family: 'Geist Variable', sans-serif;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.88);
+  color: var(--foreground);
   background: transparent;
 }
 .rbc-toolbar {
@@ -197,10 +254,10 @@
 .rbc-month-view,
 .rbc-time-view,
 .rbc-agenda-view {
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
-  background: #1F1F24;
+  background: var(--card);
 }
 .rbc-header {
   padding: 10px 4px;
@@ -208,23 +265,23 @@
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #52525E;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-  background: #18181C;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border);
+  background: var(--rbc-header-bg);
 }
-.rbc-header + .rbc-header { border-left: 1px solid rgba(255, 255, 255, 0.07); }
-.rbc-month-row { border-top: 1px solid rgba(255, 255, 255, 0.05); }
-.rbc-day-bg + .rbc-day-bg { border-left: 1px solid rgba(255, 255, 255, 0.05); }
-.rbc-off-range-bg { background: #141417; }
+.rbc-header + .rbc-header { border-left: 1px solid var(--border); }
+.rbc-month-row { border-top: 1px solid var(--rbc-grid-border); }
+.rbc-day-bg + .rbc-day-bg { border-left: 1px solid var(--rbc-grid-border); }
+.rbc-off-range-bg { background: var(--rbc-off-bg); }
 .rbc-today { background: rgba(99, 102, 241, 0.07); }
 .rbc-date-cell {
   padding: 6px 8px;
   font-size: 12px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--rbc-date-text);
   text-align: right;
 }
-.rbc-date-cell.rbc-off-range { color: rgba(255, 255, 255, 0.18); }
+.rbc-date-cell.rbc-off-range { color: var(--rbc-date-offrange); }
 .rbc-date-cell.rbc-now a {
   background: var(--cal-accent, #6366F1);
   color: white;
@@ -254,38 +311,38 @@
   background: transparent;
 }
 .rbc-time-header {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-  background: #18181C;
+  border-bottom: 1px solid var(--border);
+  background: var(--rbc-header-bg);
 }
 .rbc-time-content {
   border-top: none;
-  background: #1F1F24;
+  background: var(--card);
 }
-.rbc-time-slot { font-size: 11px; color: #3A3A46; }
-.rbc-timeslot-group { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+.rbc-time-slot { font-size: 11px; color: var(--ui-text-muted); }
+.rbc-timeslot-group { border-bottom: 1px solid var(--rbc-grid-border); }
 .rbc-current-time-indicator { background: #6366F1; height: 2px; }
-.rbc-allday-cell { border-bottom: 1px solid rgba(255, 255, 255, 0.07); }
-.rbc-time-gutter .rbc-time-slot { color: #3A3A46; }
-.rbc-time-view .rbc-time-header-cell .rbc-header { background: #18181C; }
-.rbc-agenda-view table { border-color: rgba(255, 255, 255, 0.07); }
-.rbc-agenda-date-cell, .rbc-agenda-time-cell { color: #52525E; }
-.rbc-agenda-event-cell { color: rgba(255, 255, 255, 0.88); }
+.rbc-allday-cell { border-bottom: 1px solid var(--border); }
+.rbc-time-gutter .rbc-time-slot { color: var(--ui-text-muted); }
+.rbc-time-view .rbc-time-header-cell .rbc-header { background: var(--rbc-header-bg); }
+.rbc-agenda-view table { border-color: var(--border); }
+.rbc-agenda-date-cell, .rbc-agenda-time-cell { color: var(--muted-foreground); }
+.rbc-agenda-event-cell { color: var(--foreground); }
 
 /* ─── Card utility ────────────────────────────────────────── */
 .cs-card {
-  background: #1F1F24;
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--card);
+  border: 1px solid var(--border);
   border-radius: 10px;
 }
 .cs-card-hover {
   transition: border-color 150ms ease;
 }
 .cs-card-hover:hover {
-  border-color: rgba(255, 255, 255, 0.12);
+  border-color: var(--border-hover);
 }
 
 /* ─── Scrollbar ───────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }

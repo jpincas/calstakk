@@ -16,10 +16,10 @@ interface TodoForm { uid: string; summary: string; description: string; due: str
 const empty = (uid = ''): TodoForm => ({ uid, summary: '', description: '', due: '', status: 'NEEDS-ACTION' })
 
 const STATUS_CONFIG = {
-  'NEEDS-ACTION': { label: 'To do',       color: '#8A8A96',  bg: 'rgba(255,255,255,0.06)' },
-  'IN-PROCESS':   { label: 'In progress', color: '#F59E0B',  bg: 'rgba(245,158,11,0.12)'  },
-  'COMPLETED':    { label: 'Done',        color: '#10B981',  bg: 'rgba(16,185,129,0.12)'  },
-  'CANCELLED':    { label: 'Cancelled',   color: '#3A3A46',  bg: 'rgba(255,255,255,0.04)' },
+  'NEEDS-ACTION': { label: 'To do',       color: 'var(--muted-foreground)', bg: 'var(--accent)'  },
+  'IN-PROCESS':   { label: 'In progress', color: '#F59E0B',                  bg: 'rgba(245,158,11,0.12)' },
+  'COMPLETED':    { label: 'Done',        color: '#10B981',                  bg: 'rgba(16,185,129,0.12)' },
+  'CANCELLED':    { label: 'Cancelled',   color: 'var(--ui-text-muted)',     bg: 'var(--muted)'   },
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -133,11 +133,11 @@ export function TodosPage() {
           alignItems: 'flex-start',
           gap: 10,
           padding: '10px 16px',
-          borderBottom: '1px solid rgba(255,255,255,0.04)',
+          borderBottom: '1px solid var(--border)',
           cursor: 'pointer',
           transition: 'background 100ms',
         }}
-        onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
+        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--hover-bg)')}
         onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
         onClick={() => {
           setForm({ uid: todo.uid, summary: todo.summary, description: todo.description ?? '', due: todo.due ?? '', status: todo.status ?? 'NEEDS-ACTION' })
@@ -153,7 +153,7 @@ export function TodosPage() {
           {done ? (
             <CheckCircle2 style={{ width: 16, height: 16, color: '#10B981' }} />
           ) : overdue ? (
-            <AlertCircle style={{ width: 16, height: 16, color: '#E35E5E' }} />
+            <AlertCircle style={{ width: 16, height: 16, color: 'var(--destructive)' }} />
           ) : (
             <Circle style={{ width: 16, height: 16, color: color.bg }} />
           )}
@@ -162,14 +162,14 @@ export function TodosPage() {
           <p style={{
             fontSize: 13,
             fontWeight: 400,
-            color: done ? '#3A3A46' : 'rgba(255,255,255,0.88)',
+            color: done ? 'var(--ui-text-muted)' : 'var(--foreground)',
             margin: 0,
             textDecoration: done ? 'line-through' : 'none',
           }}>
             {todo.summary}
           </p>
           {todo.description && (
-            <p style={{ fontSize: 11, color: '#52525E', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {todo.description}
             </p>
           )}
@@ -181,8 +181,8 @@ export function TodosPage() {
               fontWeight: 500,
               padding: '2px 7px',
               borderRadius: 20,
-              background: overdue ? 'rgba(227,94,94,0.12)' : 'rgba(255,255,255,0.06)',
-              color: overdue ? '#E35E5E' : '#52525E',
+              background: overdue ? 'rgba(227,94,94,0.12)' : 'var(--accent)',
+              color: overdue ? 'var(--destructive)' : 'var(--muted-foreground)',
             }}>
               {fmtDate(todo.due)}
             </span>
@@ -196,7 +196,7 @@ export function TodosPage() {
   if (!collection) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-        <p style={{ fontSize: 13, color: '#3A3A46' }}>Select a project from the sidebar.</p>
+        <p style={{ fontSize: 13, color: 'var(--ui-text-muted)' }}>Select a project from the sidebar.</p>
       </div>
     )
   }
@@ -208,11 +208,11 @@ export function TodosPage() {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ width: 9, height: 9, borderRadius: '50%', background: color.bg, display: 'inline-block', flexShrink: 0 }} />
-            <h1 style={{ fontSize: 20, fontWeight: 600, color: 'rgba(255,255,255,0.88)', margin: 0 }}>
+            <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--foreground)', margin: 0 }}>
               {displayName}
             </h1>
           </div>
-          <p style={{ fontSize: 12, color: '#52525E', margin: '4px 0 0 17px' }}>
+          <p style={{ fontSize: 12, color: 'var(--muted-foreground)', margin: '4px 0 0 17px' }}>
             {active.length} active · {completed.length} completed
           </p>
         </div>
@@ -238,7 +238,7 @@ export function TodosPage() {
       </div>
 
       {isLoading ? (
-        <div className="cs-card rounded-xl" style={{ padding: '32px', textAlign: 'center', color: '#3A3A46', fontSize: 13 }}>
+        <div className="cs-card rounded-xl" style={{ padding: '32px', textAlign: 'center', color: 'var(--ui-text-muted)', fontSize: 13 }}>
           Loading…
         </div>
       ) : (
@@ -247,8 +247,8 @@ export function TodosPage() {
           <div className="cs-card" style={{ borderRadius: 10, overflow: 'hidden' }}>
             {active.length === 0 ? (
               <div style={{ padding: '32px', textAlign: 'center' }}>
-                <CheckCircle2 style={{ width: 24, height: 24, color: '#252529', margin: '0 auto 8px' }} />
-                <p style={{ fontSize: 13, color: '#3A3A46', margin: 0 }}>All caught up.</p>
+                <CheckCircle2 style={{ width: 24, height: 24, color: 'var(--border)', margin: '0 auto 8px' }} />
+                <p style={{ fontSize: 13, color: 'var(--ui-text-muted)', margin: 0 }}>All caught up.</p>
               </div>
             ) : (
               active.map((todo) => <TodoRow key={todo.uid} todo={todo} />)
@@ -269,16 +269,16 @@ export function TodosPage() {
                   background: 'none',
                   border: 'none',
                   cursor: 'pointer',
-                  color: '#52525E',
+                  color: 'var(--muted-foreground)',
                   fontSize: 12,
                   fontWeight: 500,
                   transition: 'background 100ms',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.03)')}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--hover-bg)')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
               >
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <CheckCircle2 style={{ width: 14, height: 14, color: '#3A3A46' }} />
+                  <CheckCircle2 style={{ width: 14, height: 14, color: 'var(--ui-text-muted)' }} />
                   Completed ({completed.length})
                 </span>
                 <ChevronDown

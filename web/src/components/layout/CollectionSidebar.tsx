@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Eye, EyeOff, Crosshair, User, Settings } from 'lucide-react'
+import { Eye, EyeOff, Crosshair, User, Moon, Sun } from 'lucide-react'
 import type { Collection } from '@/types'
 import { useCollectionStore } from '@/state/collection'
 import { collectionColor } from '@/lib/colors'
@@ -9,7 +9,10 @@ interface Props {
 }
 
 export function CollectionSidebar({ collections }: Props) {
-  const { activeCollection, viewMode, hiddenCollections, focusedCollection, setCollection, toggleCollectionHidden, setFocusedCollection } = useCollectionStore()
+  const {
+    activeCollection, viewMode, hiddenCollections, focusedCollection, theme,
+    setCollection, toggleCollectionHidden, setFocusedCollection, toggleTheme,
+  } = useCollectionStore()
   const navigate = useNavigate()
   const location = useLocation()
   const names = collections.map((c) => c.name)
@@ -40,7 +43,7 @@ export function CollectionSidebar({ collections }: Props) {
             fontWeight: 600,
             letterSpacing: '0.08em',
             textTransform: 'uppercase',
-            color: '#3A3A46',
+            color: 'var(--ui-text-muted)',
             paddingLeft: 10,
           }}
         >
@@ -88,7 +91,7 @@ export function CollectionSidebar({ collections }: Props) {
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
-                    color: isActive ? 'rgba(255,255,255,0.88)' : 'inherit',
+                    color: isActive ? 'var(--sidebar-primary)' : 'inherit',
                   }}
                 >
                   {col.display_name}
@@ -125,7 +128,7 @@ export function CollectionSidebar({ collections }: Props) {
           })}
 
           {visible.length === 0 && (
-            <p style={{ padding: '8px 10px', fontSize: 12, color: '#3A3A46' }}>
+            <p style={{ padding: '8px 10px', fontSize: 12, color: 'var(--ui-text-muted)' }}>
               No projects yet.
             </p>
           )}
@@ -147,20 +150,20 @@ export function CollectionSidebar({ collections }: Props) {
             width: 26,
             height: 26,
             borderRadius: '50%',
-            background: 'rgba(255,255,255,0.08)',
+            background: 'var(--sidebar-accent)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
           }}
         >
-          <User style={{ width: 14, height: 14, color: '#52525E' }} />
+          <User style={{ width: 14, height: 14, color: 'var(--sidebar-foreground)' }} />
         </div>
         <span
           style={{
             fontSize: 12,
             fontWeight: 500,
-            color: '#52525E',
+            color: 'var(--sidebar-foreground)',
             flex: 1,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -170,6 +173,7 @@ export function CollectionSidebar({ collections }: Props) {
           Account
         </span>
         <button
+          onClick={toggleTheme}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -179,22 +183,24 @@ export function CollectionSidebar({ collections }: Props) {
             borderRadius: 6,
             border: 'none',
             background: 'transparent',
-            color: '#3A3A46',
+            color: 'var(--ui-text-muted)',
             cursor: 'pointer',
             transition: 'color 100ms, background 100ms',
             flexShrink: 0,
           }}
           onMouseEnter={(e) => {
-            ;(e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.7)'
-            ;(e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.05)'
+            ;(e.currentTarget as HTMLElement).style.color = 'var(--sidebar-primary)'
+            ;(e.currentTarget as HTMLElement).style.background = 'var(--sidebar-accent)'
           }}
           onMouseLeave={(e) => {
-            ;(e.currentTarget as HTMLElement).style.color = '#3A3A46'
+            ;(e.currentTarget as HTMLElement).style.color = 'var(--ui-text-muted)'
             ;(e.currentTarget as HTMLElement).style.background = 'transparent'
           }}
-          title="Settings"
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
-          <Settings style={{ width: 14, height: 14 }} />
+          {theme === 'dark'
+            ? <Sun style={{ width: 14, height: 14 }} />
+            : <Moon style={{ width: 14, height: 14 }} />}
         </button>
       </div>
     </aside>

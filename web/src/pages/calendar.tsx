@@ -194,7 +194,7 @@ export function CalendarPage() {
     fontSize: 12,
     fontWeight: 500,
     background: active ? accentColor.bg : 'transparent',
-    color: active ? '#fff' : '#52525E',
+    color: active ? '#fff' : 'var(--muted-foreground)',
     border: 'none',
     cursor: 'pointer',
     transition: 'background 100ms, color 100ms',
@@ -212,8 +212,8 @@ export function CalendarPage() {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '10px 20px',
-          borderBottom: '1px solid rgba(255,255,255,0.07)',
-          background: '#18181C',
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--background)',
           flexShrink: 0,
         }}
       >
@@ -224,7 +224,7 @@ export function CalendarPage() {
               display: 'flex',
               alignItems: 'center',
               borderRadius: 7,
-              border: '1px solid rgba(255,255,255,0.08)',
+              border: '1px solid var(--border)',
               overflow: 'hidden',
             }}
           >
@@ -247,7 +247,7 @@ export function CalendarPage() {
               <ChevronRight style={{ width: 14, height: 14 }} />
             </button>
           </div>
-          <h2 style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,0.88)', margin: 0 }}>
+          <h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--foreground)', margin: 0 }}>
             {viewLabel}
           </h2>
         </div>
@@ -258,7 +258,7 @@ export function CalendarPage() {
             style={{
               display: 'flex',
               borderRadius: 7,
-              border: '1px solid rgba(255,255,255,0.08)',
+              border: '1px solid var(--border)',
               overflow: 'hidden',
             }}
           >
@@ -300,7 +300,7 @@ export function CalendarPage() {
       {/* Calendar */}
       <div style={{ flex: 1, padding: 16, overflow: 'hidden' }}>
         {isLoading ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#3A3A46', fontSize: 13 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--ui-text-muted)', fontSize: 13 }}>
             Loading…
           </div>
         ) : (

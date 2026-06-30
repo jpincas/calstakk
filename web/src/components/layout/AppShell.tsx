@@ -2,12 +2,19 @@ import { useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { caldav } from '@/api'
+import { useCollectionStore } from '@/state/collection'
 import { CollectionSidebar } from './CollectionSidebar'
 import { TopNav } from './TopNav'
 
 export function AppShell() {
   const qc = useQueryClient()
   const location = useLocation()
+  const { theme } = useCollectionStore()
+
+  // Apply dark class to <html> so Tailwind dark: utilities and :root.dark CSS vars both work
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark')
+  }, [theme])
 
   const { data: collections, isLoading } = useQuery({
     queryKey: ['collections'],
@@ -36,7 +43,7 @@ export function AppShell() {
           height: '100vh',
           alignItems: 'center',
           justifyContent: 'center',
-          background: '#0E0E11',
+          background: 'var(--nav)',
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
@@ -50,7 +57,7 @@ export function AppShell() {
               animation: 'spin 0.7s linear infinite',
             }}
           />
-          <p style={{ fontSize: 12, color: '#3A3A46' }}>Loading…</p>
+          <p style={{ fontSize: 12, color: 'var(--ui-text-muted)' }}>Loading…</p>
         </div>
       </div>
     )
@@ -62,7 +69,7 @@ export function AppShell() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: '#18181C' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--background)' }}>
       {/* Top nav bar */}
       <TopNav />
 
