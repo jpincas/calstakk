@@ -18,6 +18,7 @@ export interface CalendarObject {
   ics: string;
   lastModified: Date;
   contentLength: number;
+  deadProps: Record<string, string>; // "ns\x00local" → raw XML element
 }
 
 export interface SyncChange {
@@ -47,8 +48,13 @@ export interface Storage {
   getObject(calendarName: string, uid: string): Promise<CalendarObject | null>;
   /** Returns the existing object uid for a given ical UID, or null. */
   findObjectByICalUID(calendarName: string, icalUID: string): Promise<string | null>;
+  /** Find an object with the given ical UID in any calendar. Returns { calendarName, uid } or null. */
+  findObjectByICalUIDGlobal(icalUID: string): Promise<{ calendarName: string; uid: string } | null>;
   putObject(calendarName: string, uid: string, ics: string, icalUID: string): Promise<CalendarObject>;
   deleteObject(calendarName: string, uid: string): Promise<void>;
+  updateObjectProp(calendarName: string, uid: string, key: string, rawXml: string): Promise<void>;
+  copyObject(srcCalName: string, srcUid: string, dstCalName: string, dstUid: string): Promise<CalendarObject>;
+  moveObject(srcCalName: string, srcUid: string, dstCalName: string, dstUid: string): Promise<CalendarObject>;
 
   // Sync
   getSyncToken(calendarName: string): Promise<string>;
@@ -60,10 +66,8 @@ export interface Storage {
 export async function computeETag(content: string): Promise<string> {
   const data = new TextEncoder().encode(content);
   const hash = await crypto.subtle.digest("SHA-256", data);
-  const hex = Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-  return `"${hex}"`;
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(hash)));
+  return `"${b64}"`;
 }
 
 // ─── MemoryStorage ────────────────────────────────────────────────────────────
@@ -157,6 +161,14 @@ export class MemoryStorage implements Storage {
     return c.icalUIDIndex.get(icalUID) ?? null;
   }
 
+  async findObjectByICalUIDGlobal(icalUID: string): Promise<{ calendarName: string; uid: string } | null> {
+    for (const [calendarName, cal] of this.calendars) {
+      const uid = cal.icalUIDIndex.get(icalUID);
+      if (uid) return { calendarName, uid };
+    }
+    return null;
+  }
+
   async putObject(
     calendarName: string,
     uid: string,
@@ -166,6 +178,7 @@ export class MemoryStorage implements Storage {
     const c = this.calendars.get(calendarName);
     if (!c) throw new Error(`Calendar ${calendarName} not found`);
 
+    const existing = c.objects.get(uid);
     const etag = await computeETag(ics);
     const now = new Date();
     const obj: CalendarObject = {
@@ -176,6 +189,7 @@ export class MemoryStorage implements Storage {
       ics,
       lastModified: now,
       contentLength: new TextEncoder().encode(ics).length,
+      deadProps: existing?.deadProps ?? {},
     };
 
     const isNew = !c.objects.has(uid);
@@ -206,6 +220,51 @@ export class MemoryStorage implements Storage {
     c.syncLog.push({ uid, type: "deleted", token: c.syncCounter });
   }
 
+  async updateObjectProp(calendarName: string, uid: string, key: string, rawXml: string): Promise<void> {
+    const c = this.calendars.get(calendarName);
+    if (!c) throw new Error(`Calendar ${calendarName} not found`);
+    const obj = c.objects.get(uid);
+    if (!obj) throw new Error(`Object ${uid} not found`);
+    obj.deadProps[key] = rawXml;
+  }
+
+  async copyObject(srcCalName: string, srcUid: string, dstCalName: string, dstUid: string): Promise<CalendarObject> {
+    const srcCal = this.calendars.get(srcCalName);
+    if (!srcCal) throw new Error(`Source calendar ${srcCalName} not found`);
+    const src = srcCal.objects.get(srcUid);
+    if (!src) throw new Error(`Source object ${srcUid} not found`);
+
+    const dstCal = this.calendars.get(dstCalName);
+    if (!dstCal) throw new Error(`Destination calendar ${dstCalName} not found`);
+
+    const now = new Date();
+    const dst: CalendarObject = {
+      ...src,
+      uid: dstUid,
+      href: `/calstakk/calendars/${dstCalName}/${dstUid}.ics`,
+      lastModified: now,
+      deadProps: { ...src.deadProps },
+    };
+
+    const isNew = !dstCal.objects.has(dstUid);
+    const oldDst = dstCal.objects.get(dstUid);
+    if (oldDst && oldDst.icalUID !== dst.icalUID) {
+      dstCal.icalUIDIndex.delete(oldDst.icalUID);
+    }
+    dstCal.objects.set(dstUid, dst);
+    dstCal.icalUIDIndex.set(dst.icalUID, dstUid);
+    dstCal.syncCounter++;
+    dstCal.syncLog.push({ uid: dstUid, type: isNew ? "added" : "modified", token: dstCal.syncCounter });
+
+    return dst;
+  }
+
+  async moveObject(srcCalName: string, srcUid: string, dstCalName: string, dstUid: string): Promise<CalendarObject> {
+    const dst = await this.copyObject(srcCalName, srcUid, dstCalName, dstUid);
+    await this.deleteObject(srcCalName, srcUid);
+    return dst;
+  }
+
   async getSyncToken(calendarName: string): Promise<string> {
     const c = this.calendars.get(calendarName);
     if (!c) return "0";
@@ -231,15 +290,6 @@ export class MemoryStorage implements Storage {
     if (isNaN(since)) {
       // Non-empty token that doesn't parse — invalid per RFC 6578 §7
       return { changes: [], newToken, invalidToken: true };
-    }
-
-    if (since === 0) {
-      // Full sync: return all current objects as "added"
-      const changes: SyncChange[] = Array.from(c.objects.keys()).map((uid) => ({
-        uid,
-        type: "added",
-      }));
-      return { changes, newToken };
     }
 
     // Incremental: return log entries since the token

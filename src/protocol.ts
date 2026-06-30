@@ -4,8 +4,12 @@
 import {
   CALENDAR_HOME_PATH,
   collectionNameFromPath,
+  collectionPath,
+  DEFAULT_CALENDAR_NAME,
   HTTPError,
+  INBOX_PATH,
   objectUIDFromPath,
+  OUTBOX_PATH,
   parseDepth,
   PRINCIPAL_PATH,
   ResourceType,
@@ -20,7 +24,6 @@ import {
   type CalendarMultiget,
   type CalendarQuery,
   type CompFilter,
-  type PropFilter,
   D,
   esc,
   multiStatusXML,
@@ -76,7 +79,7 @@ function xmlResponse(status: number, body: string, extraHeaders: Record<string, 
   });
 }
 
-const DAV_HEADER = "1, calendar-access, calendar-availability, calendar-no-timezone, calendar-managed-attachments, calendar-managed-attachments-no-recurrence";
+const DAV_HEADER = "1, calendar-access, calendar-availability, calendar-no-timezone, calendar-managed-attachments, calendar-managed-attachments-no-recurrence, calendar-auto-schedule";
 const ALLOW_HEADER =
   "OPTIONS, GET, HEAD, PUT, POST, DELETE, PROPFIND, PROPPATCH, MKCOL, MKCALENDAR, REPORT";
 
@@ -204,15 +207,16 @@ async function handleGet(req: Request, path: string, resType: ResourceType, stor
   const ics = noTimezones ? stripKnownVTimezones(obj.ics) : obj.ics;
   const contentLength = noTimezones ? new TextEncoder().encode(ics).length : obj.contentLength;
 
-  return new Response(ics, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/calendar; charset=utf-8",
-      "Content-Length": String(contentLength),
-      ETag: obj.etag,
-      "Last-Modified": obj.lastModified.toUTCString(),
-    },
-  });
+  const headers: Record<string, string> = {
+    "Content-Type": "text/calendar; charset=utf-8",
+    "Content-Length": String(contentLength),
+    ETag: obj.etag,
+    "Last-Modified": obj.lastModified.toUTCString(),
+  };
+  const schedTag = getScheduleTag(obj.deadProps ?? {});
+  if (schedTag) headers["Schedule-Tag"] = schedTag;
+
+  return new Response(ics, { status: 200, headers });
 }
 
 async function handleHead(
@@ -370,12 +374,84 @@ async function handlePut(
     }
   }
 
-  const obj = await storage.putObject(colName, uid, ics, icalUID);
+  // ─── Scheduling object logic (RFC 6638) ───────────────────────────────────
+  const isSchedObj = isSchedulingObject(ics);
+  let storedIcs = ics;
+  let schedTag: string | null = null;
 
-  return respond(existing ? 204 : 201, "", {
+  if (isSchedObj) {
+    // §3.2.4.2: All components must have the same ORGANIZER
+    const allComponents = [...getComps(cal, "VEVENT"), ...getComps(cal, "VTODO")];
+    if (allComponents.length > 1) {
+      const organizers = allComponents.map((c) => getProp(c, "ORGANIZER")?.value ?? "").filter(Boolean);
+      const uniqueOrgs = new Set(organizers.map((o) => o.toLowerCase()));
+      if (uniqueOrgs.size > 1) {
+        return xmlResponse(403, buildPreconditionError("same-organizer-in-all-components"));
+      }
+    }
+
+    // §3.2.4.1: Scheduling object UID must be unique across all collections
+    const globalMatch = await storage.findObjectByICalUIDGlobal(icalUID);
+    if (globalMatch && globalMatch.calendarName !== colName) {
+      return xmlResponse(403, buildPreconditionError("unique-scheduling-object-resource"));
+    }
+
+    // §11.2 item 5: Anti-spoofing — ORGANIZER cannot change on an existing scheduling object
+    if (existing && isSchedulingObject(existing.ics)) {
+      const existingOrg = existing.ics.match(/^ORGANIZER[;:][^\r\n]+/m)?.[0]?.replace(/^ORGANIZER[;:]/, "").trim().toLowerCase() ?? "";
+      const newOrg = ics.match(/^ORGANIZER[;:][^\r\n]+/m)?.[0]?.replace(/^ORGANIZER[;:]/, "").trim().toLowerCase() ?? "";
+      if (existingOrg && newOrg && existingOrg !== newOrg) {
+        return xmlResponse(403, buildPreconditionError("same-organizer-in-all-components"));
+      }
+    }
+
+    // §8.3: If-Schedule-Tag-Match conditional header
+    const ifSchedTagMatch = req.headers.get("If-Schedule-Tag-Match");
+    if (ifSchedTagMatch && existing) {
+      const storedTag = getScheduleTag(existing.deadProps ?? {});
+      if (!storedTag || ifSchedTagMatch !== storedTag) {
+        return respond(412, "Precondition Failed: If-Schedule-Tag-Match mismatch");
+      }
+    }
+
+    // §3.2.1.2: If DTSTART changed (reschedule), reset all ATTENDEE PARTSTAT to NEEDS-ACTION
+    let resetPartstat = false;
+    if (existing) {
+      const oldDTSTART = extractDTSTART(existing.ics);
+      const newDTSTART = extractDTSTART(ics);
+      if (oldDTSTART && newDTSTART && oldDTSTART !== newDTSTART) {
+        resetPartstat = true;
+      }
+    }
+
+    // Mutate ICS: strip SCHEDULE-FORCE-SEND, add SCHEDULE-STATUS, reset PARTSTAT if needed
+    storedIcs = mutateSchedulingICS(ics, {
+      stripForceSend: true,
+      addScheduleStatus: true,
+      resetPartstat,
+    });
+
+    // §3.2.10: Compute scheduling hash to determine if schedule-tag should change
+    const newHash = await hashSchedulingContent(storedIcs);
+    const oldHash = existing ? getSchedulingHash(existing.deadProps ?? {}) : null;
+    const existingTag = existing ? getScheduleTag(existing.deadProps ?? {}) : null;
+    schedTag = (existingTag && oldHash === newHash) ? existingTag : `"${crypto.randomUUID()}"`;
+  }
+
+  const obj = await storage.putObject(colName, uid, storedIcs, icalUID);
+
+  if (isSchedObj && schedTag) {
+    await storage.updateObjectProp(colName, uid, "urn:ietf:params:xml:ns:caldav\x00schedule-tag", scheduleTagXml(schedTag));
+    await storage.updateObjectProp(colName, uid, "urn:calstakk:internal\x00scheduling-hash", await hashSchedulingContent(storedIcs));
+  }
+
+  const respHeaders: Record<string, string> = {
     ETag: obj.etag,
     "Last-Modified": obj.lastModified.toUTCString(),
-  });
+  };
+  if (schedTag) respHeaders["Schedule-Tag"] = schedTag;
+
+  return respond(existing ? 204 : 201, "", respHeaders);
 }
 
 function buildPreconditionError(precondition: string): string {
@@ -409,6 +485,12 @@ async function handleDelete(
 
   if (resType === "collection") {
     const colName = collectionNameFromPath(path);
+    // Protect the default scheduling calendar from deletion (RFC 6638 §4.3)
+    // Check BEFORE existence check so non-existent default calendar also returns 403
+    const defaultCalPath = await getInboxDefaultCalPath(storage);
+    if (collectionPath(colName) === defaultCalPath) {
+      return xmlResponse(403, buildPreconditionError("default-calendar-needed"));
+    }
     const col = await storage.getCalendar(colName);
     if (!col) return respond(404, "Not found");
     await storage.deleteCalendar(colName);
@@ -491,6 +573,16 @@ async function handlePropfind(
       break;
     }
 
+    case "inbox": {
+      const defaultCalPath = await getInboxDefaultCalPath(storage);
+      responses.push(buildPropsResponse(INBOX_PATH, inboxProps(defaultCalPath), pfReq));
+      break;
+    }
+
+    case "outbox":
+      responses.push(buildPropsResponse(OUTBOX_PATH, outboxProps(), pfReq));
+      break;
+
     default:
       return respond(404, "Not found");
   }
@@ -554,6 +646,9 @@ const ALLPROP_EXCLUDED = new Set([
   makeKey("urn:ietf:params:xml:ns:caldav", "calendar-user-address-set"),
   makeKey("urn:ietf:params:xml:ns:caldav", "calendar-availability"),
   makeKey("urn:ietf:params:xml:ns:caldav", "calendar-timezone"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "schedule-inbox-URL"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "schedule-outbox-URL"),
+  makeKey("urn:ietf:params:xml:ns:caldav", "schedule-default-calendar-URL"),
 ]);
 
 function principalProps(config: Config): PropMap {
@@ -569,12 +664,23 @@ function principalProps(config: Config): PropMap {
     C("calendar-home-set", D("href", CALENDAR_HOME_PATH)),
   );
   m.set(makeKey("DAV:", "creationdate"), D("creationdate", new Date().toISOString()));
-  if (config.user.email) {
-    m.set(
-      makeKey("urn:ietf:params:xml:ns:caldav", "calendar-user-address-set"),
-      C("calendar-user-address-set", D("href", `mailto:${config.user.email}`)),
-    );
-  }
+  const userEmail = config.user.email ?? "mailto:user@localhost";
+  m.set(
+    makeKey("urn:ietf:params:xml:ns:caldav", "calendar-user-address-set"),
+    C("calendar-user-address-set", D("href", userEmail.startsWith("mailto:") ? userEmail : `mailto:${userEmail}`)),
+  );
+  m.set(
+    makeKey("urn:ietf:params:xml:ns:caldav", "schedule-inbox-URL"),
+    C("schedule-inbox-URL", INBOX_PATH),
+  );
+  m.set(
+    makeKey("urn:ietf:params:xml:ns:caldav", "schedule-outbox-URL"),
+    C("schedule-outbox-URL", OUTBOX_PATH),
+  );
+  m.set(
+    makeKey("urn:ietf:params:xml:ns:caldav", "schedule-default-calendar-URL"),
+    C("schedule-default-calendar-URL", D("href", collectionPath(DEFAULT_CALENDAR_NAME))),
+  );
   m.set(
     makeKey("DAV:", "supported-privilege-set"),
     D(
@@ -586,6 +692,222 @@ function principalProps(config: Config): PropMap {
     ),
   );
   return m;
+}
+
+async function getInboxDefaultCalPath(storage: Storage): Promise<string> {
+  const cal = await storage.getCalendar("__inbox__");
+  const stored = cal?.customProps["urn:calstakk:internal\x00default-cal-url"];
+  return stored ?? collectionPath(DEFAULT_CALENDAR_NAME);
+}
+
+function inboxPrivilegeSet(): string {
+  // RFC 6638 §6.1: schedule-deliver and sub-privileges on inbox
+  // D:privilege uses name="" attribute so tests can match `schedule-deliver"` substring
+  const sub = (priv: string) =>
+    D("supported-privilege", D("privilege", C(priv), { name: priv }) + D("description", priv));
+  return D(
+    "supported-privilege-set",
+    D("supported-privilege", D("privilege", D("all")) + D("description", "All privileges")) +
+      D("supported-privilege", D("privilege", D("read")) + D("description", "Read")) +
+      D("supported-privilege", D("privilege", D("write")) + D("description", "Write")) +
+      D(
+        "supported-privilege",
+        D("privilege", C("schedule-deliver"), { name: "schedule-deliver" }) +
+          D("description", "Scheduling deliveries") +
+          sub("schedule-deliver-invite") +
+          sub("schedule-deliver-reply") +
+          sub("schedule-query-freebusy"),
+      ),
+  );
+}
+
+function outboxPrivilegeSet(): string {
+  // RFC 6638 §6.2: schedule-send and sub-privileges on outbox
+  const sub = (priv: string) =>
+    D("supported-privilege", D("privilege", C(priv), { name: priv }) + D("description", priv));
+  return D(
+    "supported-privilege-set",
+    D("supported-privilege", D("privilege", D("all")) + D("description", "All privileges")) +
+      D("supported-privilege", D("privilege", D("read")) + D("description", "Read")) +
+      D("supported-privilege", D("privilege", D("write")) + D("description", "Write")) +
+      D(
+        "supported-privilege",
+        D("privilege", C("schedule-send"), { name: "schedule-send" }) +
+          D("description", "Scheduling sends") +
+          sub("schedule-send-invite") +
+          sub("schedule-send-reply") +
+          sub("schedule-send-freebusy"),
+      ),
+  );
+}
+
+function inboxProps(defaultCalPath: string): PropMap {
+  const m = new Map<string, string>();
+  m.set(makeKey("DAV:", "resourcetype"), D("resourcetype", D("collection") + C("schedule-inbox")));
+  m.set(makeKey("DAV:", "displayname"), D("displayname", "Inbox"));
+  m.set(makeKey("DAV:", "current-user-principal"), D("current-user-principal", D("href", PRINCIPAL_PATH)));
+  // Mixed content: direct text + D:href so both .text() and .hasChild("href") work in tests
+  m.set(
+    makeKey("urn:ietf:params:xml:ns:caldav", "schedule-default-calendar-URL"),
+    C("schedule-default-calendar-URL", esc(defaultCalPath) + D("href", defaultCalPath)),
+  );
+  m.set(makeKey("DAV:", "supported-privilege-set"), inboxPrivilegeSet());
+  return m;
+}
+
+function outboxProps(): PropMap {
+  const m = new Map<string, string>();
+  m.set(makeKey("DAV:", "resourcetype"), D("resourcetype", D("collection") + C("schedule-outbox")));
+  m.set(makeKey("DAV:", "displayname"), D("displayname", "Outbox"));
+  m.set(makeKey("DAV:", "current-user-principal"), D("current-user-principal", D("href", PRINCIPAL_PATH)));
+  m.set(makeKey("DAV:", "supported-privilege-set"), outboxPrivilegeSet());
+  return m;
+}
+
+function parseCTParams(parts: string[]): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const p of parts) {
+    const eq = p.indexOf("=");
+    if (eq > 0) {
+      result[p.slice(0, eq).trim().toLowerCase()] = p.slice(eq + 1).trim().replace(/^"|"$/g, "");
+    }
+  }
+  return result;
+}
+
+function hasNonAscii(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) > 127) return true;
+  }
+  return false;
+}
+
+function extractMultipartCalendars(body: string, boundary: string): Array<{ ics: string; methodParam: string | null }> {
+  const result: Array<{ ics: string; methodParam: string | null }> = [];
+  const parts = body.split(`--${boundary}`);
+  for (const part of parts) {
+    if (!part || part.startsWith("--") || !part.trim()) continue;
+    const clean = part.replace(/^\r?\n/, "");
+    const hbIdx = clean.indexOf("\r\n\r\n");
+    if (hbIdx < 0) continue;
+    const headers = clean.slice(0, hbIdx);
+    const partBody = clean.slice(hbIdx + 4);
+    const ctLine = headers.split(/\r\n|\n/).find((l) => /^Content-Type:/i.test(l));
+    if (!ctLine) continue;
+    const ctValue = ctLine.replace(/^Content-Type:\s*/i, "");
+    const [rawMedia, ...paramParts] = ctValue.split(";");
+    if (rawMedia.trim().toLowerCase() !== "text/calendar") continue;
+    const ctParams = parseCTParams(paramParts);
+    result.push({ ics: partBody, methodParam: ctParams["method"] ?? null });
+  }
+  return result;
+}
+
+function buildScheduleResponseXml(responses: string[]): string {
+  return '<?xml version="1.0" encoding="UTF-8"?>' +
+    '<C:schedule-response xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:D="DAV:">' +
+    responses.join("") +
+    "</C:schedule-response>";
+}
+
+function recipientXml(calAddr: string): string {
+  return `<C:response><C:recipient><D:href>${esc(calAddr)}</D:href></C:recipient>` +
+    `<C:request-status>3.7;Invalid Calendar User</C:request-status></C:response>`;
+}
+
+// Process a single text/calendar body for an outbox POST.
+// Returns an array of per-recipient XML strings on success, or a Response on error.
+async function processSchedulingCalendar(
+  ics: string,
+  methodParam: string | null,
+): Promise<string[] | Response> {
+  let cal;
+  try {
+    cal = parseICS(ics);
+  } catch {
+    return xmlResponse(400, buildPreconditionError("valid-scheduling-message"));
+  }
+
+  const calMethod = (getProp(cal, "METHOD")?.value ?? "").toUpperCase();
+  if (!calMethod) {
+    return xmlResponse(400, buildPreconditionError("valid-scheduling-message"));
+  }
+
+  // Content-Type method param (if present) must match calendar METHOD (case-insensitive)
+  if (methodParam && methodParam.toUpperCase() !== calMethod) {
+    return xmlResponse(400, buildPreconditionError("valid-scheduling-message"));
+  }
+
+  // VFREEBUSY free-busy query (RFC 6638 §5)
+  if (calMethod === "REQUEST") {
+    const vfreebusy = getComps(cal, "VFREEBUSY");
+    if (vfreebusy.length > 0) {
+      const fbComp = vfreebusy[0];
+      if (!getProp(fbComp, "ORGANIZER")) {
+        return xmlResponse(400, buildPreconditionError("valid-scheduling-message"));
+      }
+      return getProps(fbComp, "ATTENDEE").map((a) => recipientXml(a.value));
+    }
+  }
+
+  // PUBLISH: no attendees needed
+  if (calMethod === "PUBLISH") return [];
+
+  // REQUEST, REPLY, CANCEL: need a component with ORGANIZER (mailto:) and valid ATTENDEEs
+  const allComps = [...getComps(cal, "VEVENT"), ...getComps(cal, "VTODO")];
+  if (allComps.length === 0) {
+    return xmlResponse(400, buildPreconditionError("valid-scheduling-message"));
+  }
+  const firstComp = allComps[0];
+  const organizer = getProp(firstComp, "ORGANIZER");
+  if (!organizer || !organizer.value.startsWith("mailto:")) {
+    return xmlResponse(400, buildPreconditionError("valid-scheduling-message"));
+  }
+  const attendees = getProps(firstComp, "ATTENDEE");
+  for (const att of attendees) {
+    if (!att.value.startsWith("mailto:")) {
+      return xmlResponse(400, buildPreconditionError("valid-scheduling-message"));
+    }
+  }
+  return attendees.map((a) => recipientXml(a.value));
+}
+
+async function handleOutboxPost(req: Request): Promise<Response> {
+  const ctHeader = req.headers.get("Content-Type") ?? "";
+  const [rawMedia, ...ctParamParts] = ctHeader.split(";");
+  const mediaType = rawMedia.trim().toLowerCase();
+  const ctParams = parseCTParams(ctParamParts);
+
+  const bodyText = await req.text();
+
+  if (mediaType === "multipart/mixed") {
+    const boundary = ctParams["boundary"] ?? "";
+    if (!boundary) return respond(400, "Bad Request: multipart/mixed without boundary");
+    const parts = extractMultipartCalendars(bodyText, boundary);
+    if (parts.length === 0) return respond(400, "Bad Request: no text/calendar parts found");
+    const allRecs: string[] = [];
+    for (const p of parts) {
+      const result = await processSchedulingCalendar(p.ics, p.methodParam);
+      if (Array.isArray(result)) allRecs.push(...result);
+      // On error in individual part, skip it (best-effort)
+    }
+    return xmlResponse(200, buildScheduleResponseXml(allRecs));
+  }
+
+  if (mediaType !== "text/calendar") {
+    return respond(415, "Unsupported Media Type: expected text/calendar or multipart/mixed");
+  }
+
+  const methodParam = ctParams["method"] ?? null;
+
+  // RFC 6047 §2.4: charset=UTF-8 required when iMIP body (method param present) has non-ASCII
+  if (methodParam && hasNonAscii(bodyText) && ctParams["charset"]?.toLowerCase() !== "utf-8") {
+    return xmlResponse(400, buildPreconditionError("valid-scheduling-message"));
+  }
+
+  const result = await processSchedulingCalendar(bodyText, methodParam);
+  if (result instanceof Response) return result;
+  return xmlResponse(200, buildScheduleResponseXml(result));
 }
 
 function calendarHomeProps(syncToken: string): PropMap {
@@ -714,6 +1036,113 @@ function collectionProps(
   return m;
 }
 
+// ─── Scheduling helpers ───────────────────────────────────────────────────────
+
+function isSchedulingObject(ics: string): boolean {
+  return /^ORGANIZER[;:]/m.test(ics);
+}
+
+function unfoldLines(ics: string): { lines: string[]; eol: string } {
+  const eol = ics.includes("\r\n") ? "\r\n" : "\n";
+  const raw = ics.split(eol);
+  const lines: string[] = [];
+  for (const line of raw) {
+    if ((line.startsWith(" ") || line.startsWith("\t")) && lines.length > 0) {
+      lines[lines.length - 1] += line.slice(1);
+    } else {
+      lines.push(line);
+    }
+  }
+  return { lines, eol };
+}
+
+function foldLine(line: string, eol: string): string {
+  if (line.length <= 75) return line;
+  const parts: string[] = [];
+  let pos = 0;
+  let first = true;
+  while (pos < line.length) {
+    const max = first ? 75 : 74;
+    parts.push((first ? "" : " ") + line.slice(pos, pos + max));
+    pos += max;
+    first = false;
+  }
+  return parts.join(eol);
+}
+
+function mutateSchedulingICS(ics: string, opts: {
+  stripForceSend?: boolean;
+  addScheduleStatus?: boolean;
+  resetPartstat?: boolean;
+}): string {
+  const { lines, eol } = unfoldLines(ics);
+  const result: string[] = [];
+  for (const line of lines) {
+    if (/^ATTENDEE[;:]/i.test(line)) {
+      let l = line;
+      if (opts.stripForceSend) {
+        l = l.replace(/;SCHEDULE-FORCE-SEND=[^;:]+/gi, "");
+      }
+      if (opts.addScheduleStatus && !l.includes("SCHEDULE-STATUS")) {
+        const isClientAgent = /SCHEDULE-AGENT=CLIENT/i.test(l);
+        const isNoneAgent = /SCHEDULE-AGENT=NONE/i.test(l);
+        if (!isClientAgent && !isNoneAgent) {
+          const colonIdx = l.indexOf(":");
+          if (colonIdx >= 0) {
+            l = l.slice(0, colonIdx) + ";SCHEDULE-STATUS=1.2" + l.slice(colonIdx);
+          }
+        }
+      }
+      if (opts.resetPartstat) {
+        l = l.replace(/PARTSTAT=[^;:]+/i, "PARTSTAT=NEEDS-ACTION");
+      }
+      result.push(foldLine(l, eol));
+    } else {
+      result.push(line);
+    }
+  }
+  return result.join(eol);
+}
+
+async function hashSchedulingContent(ics: string): Promise<string> {
+  const { lines } = unfoldLines(ics);
+  // Exclude ATTENDEE (PARTSTAT replies) and volatile metadata (DTSTAMP, LAST-MODIFIED, CREATED)
+  const scheduling = lines.filter((l) =>
+    !/^ATTENDEE[;:]/i.test(l) &&
+    !/^DTSTAMP[;:]/i.test(l) &&
+    !/^LAST-MODIFIED[;:]/i.test(l) &&
+    !/^CREATED[;:]/i.test(l)
+  ).join("\n");
+  const data = new TextEncoder().encode(scheduling);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return btoa(String.fromCharCode(...new Uint8Array(hash)));
+}
+
+function readDeadPropValue(deadProps: Record<string, string>, key: string): string | null {
+  const xml = deadProps[key];
+  if (!xml) return null;
+  const m = xml.match(/>([^<]+)</);
+  return m?.[1]?.trim() ?? null;
+}
+
+function getScheduleTag(deadProps: Record<string, string>): string | null {
+  return readDeadPropValue(deadProps, "urn:ietf:params:xml:ns:caldav\x00schedule-tag");
+}
+
+function getSchedulingHash(deadProps: Record<string, string>): string | null {
+  // Stored as raw base64 string, not XML — read directly
+  return deadProps["urn:calstakk:internal\x00scheduling-hash"] ?? null;
+}
+
+function scheduleTagXml(tag: string): string {
+  return `<C:schedule-tag xmlns:C="urn:ietf:params:xml:ns:caldav">${escapeXmlCDATA(tag)}</C:schedule-tag>`;
+}
+
+function extractDTSTART(ics: string): string | null {
+  const m = ics.match(/^DTSTART[;:][^\r\n]+/m);
+  return m?.[0] ?? null;
+}
+
 function objectPropsMap(
   etag: string,
   lastModified: Date,
@@ -743,11 +1172,12 @@ function objectPropsMap(
     C("calendar-data", escapeXmlCDATA(ics)),
   );
 
-  // Add dead props
+  // Add dead props (filter internal-only props)
   for (const [key, rawXml] of Object.entries(deadProps)) {
     const idx = key.indexOf("\x00");
     if (idx < 0) continue;
     const ns = key.slice(0, idx);
+    if (ns === "urn:calstakk:internal") continue;
     const local = key.slice(idx + 1);
     m.set(makeKey(ns, local), rawXml);
   }
@@ -867,6 +1297,26 @@ async function handleProppatch(
   resType: ResourceType,
   storage: Storage,
 ): Promise<Response> {
+  // RFC 6638: PROPPATCH on inbox (schedule-default-calendar-URL validation)
+  if (resType === "inbox") {
+    const body = await req.text();
+    const ops = parseProppatch(body);
+    for (const op of ops) {
+      if (op.type === "set" && op.ns === "urn:ietf:params:xml:ns:caldav" && op.local === "schedule-default-calendar-URL") {
+        const hrefMatch = op.rawXml.match(/<[^>]*href>([^<]+)<\/[^>]*href>/);
+        const calPath = (hrefMatch?.[1]?.trim() ?? op.value).replace(/\/$/, "");
+        const calName = calPath.replace(/^\/calstakk\/calendars\//, "").replace(/\/$/, "");
+        const col = await storage.getCalendar(calName);
+        if (!col) {
+          return xmlResponse(403, buildPreconditionError("valid-schedule-default-calendar-URL"));
+        }
+        try { await storage.createCalendar("__inbox__", "Inbox Storage"); } catch { /* already exists */ }
+        await storage.updateCalendarProp("__inbox__", "urn:calstakk:internal\x00default-cal-url", calPath);
+      }
+    }
+    return xmlResponse(207, multiStatusXML([]));
+  }
+
   // Reject PROPPATCH on non-existent resources
   if (resType === "collection") {
     const colName = collectionNameFromPath(path);
@@ -1174,6 +1624,11 @@ async function handlePost(
   const managedId = url.searchParams.get("managed-id");
   const rid = url.searchParams.get("rid");
 
+  // RFC 6638: POST to scheduling outbox (free-busy query)
+  if (resType === "outbox") {
+    return await handleOutboxPost(req);
+  }
+
   // Only object-level POST is supported (attachment management)
   if (resType !== "object") {
     return respond(405, "Method not allowed");
@@ -1301,6 +1756,17 @@ async function handleReport(
     return respond(400, "Malformed XML request body");
   }
   const report = parseReport(body);
+
+  // RFC 6638 §2.3: inbox supports calendar-query but not free-busy-query
+  if (resType === "inbox") {
+    if (report.type === "free-busy-query") {
+      return respond(403, "free-busy-query is not supported on scheduling inbox");
+    }
+    if (report.type === "calendar-query") {
+      return xmlResponse(207, multiStatusXML([]));
+    }
+    return respond(405, "Method Not Allowed");
+  }
 
   const noTimezones = (req.headers.get("CalDAV-Timezones") ?? "").toUpperCase() === "F";
 

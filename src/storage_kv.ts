@@ -34,6 +34,7 @@ interface StoredObj {
   ics: string;
   lastModified: string; // ISO 8601
   contentLength: number;
+  deadProps?: Record<string, string>; // "ns\x00local" → raw XML element
 }
 
 interface LogEntry {
@@ -72,6 +73,7 @@ function toCalObj(s: StoredObj): CalendarObject {
     ics: s.ics,
     lastModified: new Date(s.lastModified),
     contentLength: s.contentLength,
+    deadProps: s.deadProps ?? {},
   };
 }
 
@@ -155,6 +157,15 @@ export class KVStorage implements Storage {
     return entry.value ?? null;
   }
 
+  async findObjectByICalUIDGlobal(icalUID: string): Promise<{ calendarName: string; uid: string } | null> {
+    const cals = await this.listCalendars();
+    for (const cal of cals) {
+      const uid = await this.findObjectByICalUID(cal.name, icalUID);
+      if (uid) return { calendarName: cal.name, uid };
+    }
+    return null;
+  }
+
   async putObject(
     calendarName: string,
     uid: string,
@@ -230,6 +241,40 @@ export class KVStorage implements Storage {
 
       if (res.ok) return;
     }
+  }
+
+  async updateObjectProp(calendarName: string, uid: string, key: string, rawXml: string): Promise<void> {
+    const oKey = objKey(calendarName, uid);
+    while (true) {
+      const entry = await this.kv.get<StoredObj>(oKey);
+      if (!entry.value) throw new Error(`Object ${uid} not found`);
+      const updated: StoredObj = {
+        ...entry.value,
+        deadProps: { ...entry.value.deadProps, [key]: rawXml },
+      };
+      const res = await this.kv.atomic().check(entry).set(oKey, updated).commit();
+      if (res.ok) return;
+    }
+  }
+
+  async copyObject(srcCalName: string, srcUid: string, dstCalName: string, dstUid: string): Promise<CalendarObject> {
+    const srcEntry = await this.kv.get<StoredObj>(objKey(srcCalName, srcUid));
+    if (!srcEntry.value) throw new Error(`Source object ${srcUid} not found`);
+    const src = srcEntry.value;
+    const dst = await this.putObject(dstCalName, dstUid, src.ics, src.icalUID);
+    // Copy dead props if any
+    if (src.deadProps && Object.keys(src.deadProps).length > 0) {
+      for (const [k, v] of Object.entries(src.deadProps)) {
+        await this.updateObjectProp(dstCalName, dstUid, k, v);
+      }
+    }
+    return dst;
+  }
+
+  async moveObject(srcCalName: string, srcUid: string, dstCalName: string, dstUid: string): Promise<CalendarObject> {
+    const dst = await this.copyObject(srcCalName, srcUid, dstCalName, dstUid);
+    await this.deleteObject(srcCalName, srcUid);
+    return dst;
   }
 
   // ── Sync ───────────────────────────────────────────────────────────────────

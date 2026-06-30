@@ -48,6 +48,9 @@ export function parseDepth(header: string | null): Depth {
 
 export const PRINCIPAL_PATH = "/calstakk";
 export const CALENDAR_HOME_PATH = "/calstakk/calendars";
+export const INBOX_PATH = "/calstakk/inbox/";
+export const OUTBOX_PATH = "/calstakk/outbox/";
+export const DEFAULT_CALENDAR_NAME = "default";
 
 export function collectionPath(name: string): string {
   return `${CALENDAR_HOME_PATH}/${name}`;
@@ -61,28 +64,24 @@ export type ResourceType =
   | "root"
   | "principal"
   | "calendarHome"
+  | "inbox"
+  | "outbox"
   | "collection"
   | "object"
   | "unknown";
 
 export function resourceTypeAtPath(path: string): ResourceType {
-  // Strip trailing slash
   const p = path.replace(/\/$/, "") || "/";
-  // Count path segments
+  if (p === INBOX_PATH.replace(/\/$/, "")) return "inbox";
+  if (p === OUTBOX_PATH.replace(/\/$/, "")) return "outbox";
   const parts = p.split("/").filter(Boolean);
   switch (parts.length) {
-    case 0:
-      return "root";
-    case 1:
-      return "principal"; // /calstakk
-    case 2:
-      return "calendarHome"; // /calstakk/calendars
-    case 3:
-      return "collection"; // /calstakk/calendars/<name>
-    case 4:
-      return "object"; // /calstakk/calendars/<name>/<uid>.ics
-    default:
-      return "unknown";
+    case 0: return "root";
+    case 1: return "principal"; // /calstakk
+    case 2: return "calendarHome"; // /calstakk/calendars
+    case 3: return "collection"; // /calstakk/calendars/<name>
+    case 4: return "object"; // /calstakk/calendars/<name>/<uid>.ics
+    default: return "unknown";
   }
 }
 

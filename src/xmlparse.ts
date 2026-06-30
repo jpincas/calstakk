@@ -167,7 +167,8 @@ function xmlUnescape(s: string): string {
 function buildFromTokens(tokens: Token[]): XNode | null {
   const stack: { node: XNode; scope: NSScope }[] = [];
   let root: XNode | null = null;
-  const rootScope: NSScope = new Map([["", ""]]);
+  // Per XML Namespaces spec §3, the "xml" prefix is predefined and cannot be redeclared.
+  const rootScope: NSScope = new Map([["", ""], ["xml", "http://www.w3.org/XML/1998/namespace"]]);
 
   for (const tok of tokens) {
     if (tok.kind === "text") {
@@ -253,4 +254,56 @@ export function findAllDeep(node: XNode, ns: string, local: string): XNode[] {
 /** Get attribute value by local name (first match, any namespace). */
 export function attr(node: XNode, local: string): string | undefined {
   return node.attrs.find((a) => a.local === local)?.value;
+}
+
+// ─── Serializer ───────────────────────────────────────────────────────────────
+
+/** Serialize an XNode back to an XML element string. */
+export function serializeXNode(node: XNode): string {
+  let nsDecl = "";
+  let tagPrefix = "";
+  if (node.ns) {
+    tagPrefix = "X";
+    nsDecl = ` xmlns:X="${escAttr(node.ns)}"`;
+  }
+  const tag = tagPrefix ? `${tagPrefix}:${node.local}` : node.local;
+
+  const attrParts: string[] = [];
+  for (const a of node.attrs) {
+    if (a.ns === "http://www.w3.org/XML/1998/namespace") {
+      attrParts.push(`xml:${a.local}="${escAttr(a.value)}"`);
+    } else if (a.ns) {
+      attrParts.push(`A:${a.local}="${escAttr(a.value)}" xmlns:A="${escAttr(a.ns)}"`);
+    } else {
+      attrParts.push(`${a.local}="${escAttr(a.value)}"`);
+    }
+  }
+  const attrStr = attrParts.length > 0 ? " " + attrParts.join(" ") : "";
+
+  const childStr = node.children.map(serializeXNode).join("");
+  const textStr = escText(node.text);
+  const content = textStr + childStr;
+
+  if (!content) return `<${tag}${nsDecl}${attrStr}/>`;
+  return `<${tag}${nsDecl}${attrStr}>${content}</${tag}>`;
+}
+
+function escAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+}
+
+function escText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Returns false if the XML string has unclosed elements (malformed). */
+export function isWellFormedXML(xml: string): boolean {
+  if (!xml.trim()) return true;
+  const tokens = tokenize(xml);
+  let depth = 0;
+  for (const tok of tokens) {
+    if (tok.kind === "start" && !tok.selfClose) depth++;
+    if (tok.kind === "end") depth--;
+  }
+  return depth === 0;
 }
