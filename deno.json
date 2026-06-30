@@ -1,5 +1,4 @@
 {
-  "name": "calstakk",
   "version": "0.1.0",
   "tasks": {
     "start": "deno run --unstable-kv --allow-net --allow-read --allow-write --allow-env server.ts",
@@ -19,7 +18,7 @@
     "lib": ["deno.window", "deno.unstable", "dom"]
   },
   "lint": {
-    "exclude": ["web/"],
+    "exclude": ["web/", ".claude/"],
     "rules": {
       "exclude": ["no-explicit-any", "require-await"]
     }

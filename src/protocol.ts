@@ -230,7 +230,7 @@ function stripKnownVTimezones(ics: string): string {
   return result.join(eol);
 }
 
-async function handleGet(req: Request, path: string, parsed: ParsedPath, user: User, storage: Storage): Promise<Response> {
+async function handleGet(req: Request, _path: string, parsed: ParsedPath, user: User, storage: Storage): Promise<Response> {
   const own = checkOwnership(parsed, user);
   if (own) return own;
 
@@ -255,7 +255,7 @@ async function handleGet(req: Request, path: string, parsed: ParsedPath, user: U
   return new Response(ics, { status: 200, headers });
 }
 
-async function handleHead(path: string, parsed: ParsedPath, user: User, storage: Storage): Promise<Response> {
+async function handleHead(_path: string, parsed: ParsedPath, user: User, storage: Storage): Promise<Response> {
   const own = checkOwnership(parsed, user);
   if (own) return own;
 
@@ -279,7 +279,7 @@ async function handleHead(path: string, parsed: ParsedPath, user: User, storage:
 
 async function handlePut(
   req: Request,
-  path: string,
+  _path: string,
   parsed: ParsedPath,
   user: User,
   storage: Storage,
@@ -532,7 +532,7 @@ function buildPreconditionError(precondition: string): string {
 // ─── DELETE ───────────────────────────────────────────────────────────────────
 
 async function handleDelete(
-  path: string,
+  _path: string,
   parsed: ParsedPath,
   user: User,
   storage: Storage,
@@ -833,7 +833,7 @@ function outboxPrivilegeSet(): string {
 function inboxProps(username: string, defaultCalPath: string): PropMap {
   const m = new Map<string, string>();
   const pp = principalPath(username);
-  const ip = inboxPath(username);
+  const _ip = inboxPath(username);
   m.set(makeKey("DAV:", "resourcetype"), D("resourcetype", D("collection") + C("schedule-inbox")));
   m.set(makeKey("DAV:", "displayname"), D("displayname", "Inbox"));
   m.set(makeKey("DAV:", "current-user-principal"), D("current-user-principal", D("href", pp)));
@@ -958,7 +958,7 @@ async function processSchedulingCalendar(
   return attendees.map((a) => recipientXml(a.value));
 }
 
-async function handleOutboxPost(req: Request, parsed: ParsedPath, user: User): Promise<Response> {
+async function handleOutboxPost(req: Request, _parsed: ParsedPath, user: User): Promise<Response> {
   const ctHeader = req.headers.get("Content-Type") ?? "";
   const [rawMedia, ...ctParamParts] = ctHeader.split(";");
   const mediaType = rawMedia.trim().toLowerCase();
@@ -1716,7 +1716,7 @@ async function handleProppatch(
 
 async function handleMkcol(
   req: Request,
-  path: string,
+  _path: string,
   parsed: ParsedPath,
   user: User,
   storage: Storage,
@@ -1851,7 +1851,7 @@ async function handleMove(
 
 async function handlePost(
   req: Request,
-  path: string,
+  _path: string,
   parsed: ParsedPath,
   user: User,
   storage: Storage,
@@ -2019,9 +2019,9 @@ function hasInvalidFilter(cf: CompFilter): boolean {
 }
 
 async function handleCalendarQuery(
-  path: string,
+  _path: string,
   parsed: ParsedPath,
-  user: User,
+  _user: User,
   query: CalendarQuery,
   storage: Storage,
   noTimezones = false,
@@ -2101,9 +2101,9 @@ async function handleCalendarMultiget(
 
 async function handleSyncCollection(
   req: Request,
-  path: string,
+  _path: string,
   parsed: ParsedPath,
-  user: User,
+  _user: User,
   sync: SyncCollectionQuery,
   storage: Storage,
 ): Promise<Response> {
@@ -2168,9 +2168,9 @@ async function handleSyncCollection(
 
 async function handleFreeBusyQuery(
   _req: Request,
-  path: string,
+  _path: string,
   parsed: ParsedPath,
-  user: User,
+  _user: User,
   queryStart: string,
   queryEnd: string,
   storage: Storage,

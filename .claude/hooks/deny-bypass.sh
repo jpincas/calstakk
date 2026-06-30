@@ -8,10 +8,8 @@
 #   - git commit --no-verify       (skips pre-commit hook)
 #   - git push --force / -f to main (overwrites shared history)
 #   - nohup / & disown              (use the tool's native backgrounding)
-#   - direct edits via shell to generated paths (use `make generate`):
-#       internal/db/sqlc/      — sqlc output
-#       web/src/types/api.ts   — tygo output
-#       web/src/components/ui/ — shadcn-managed primitives
+#   - direct shell writes to shadcn-managed primitives (use `npx shadcn add`):
+#       web/src/components/ui/
 
 set -euo pipefail
 
@@ -40,10 +38,9 @@ if printf '%s' "$cmd" | grep -Eq 'git[[:space:]]+push.*(--force|[[:space:]]-f([[
   fi
 fi
 
-# Direct shell writes to generated paths — agent should run `make generate`
-# (or, for shadcn primitives, `npx shadcn@latest add <name>`).
-if printf '%s' "$cmd" | grep -Eq '(>|tee|sed -i|cp .* )(internal/db/sqlc/|web/src/types/api\.ts|web/src/components/ui/)'; then
-  block "don't edit generated code directly — edit the source and run 'make generate' (or 'npx shadcn add' for ui primitives)."
+# Direct shell writes to shadcn-managed primitives — use `npx shadcn@latest add <name>` instead.
+if printf '%s' "$cmd" | grep -Eq '(>|tee|sed -i|cp .* )(web/src/components/ui/)'; then
+  block "don't edit shadcn primitives directly — use 'npx shadcn@latest add <name>'."
 fi
 
 exit 0
