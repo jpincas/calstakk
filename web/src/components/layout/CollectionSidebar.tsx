@@ -1,104 +1,201 @@
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
+import { Eye, EyeOff, Crosshair, User, Settings } from 'lucide-react'
 import type { Collection } from '@/types'
 import { useCollectionStore } from '@/state/collection'
 import { collectionColor } from '@/lib/colors'
-import { CalendarDays } from 'lucide-react'
-import { cn } from '@/lib/utils'
 
 interface Props {
   collections: Collection[]
 }
 
 export function CollectionSidebar({ collections }: Props) {
-  const { activeCollection, setCollection } = useCollectionStore()
+  const { activeCollection, viewMode, hiddenCollections, focusedCollection, setCollection, toggleCollectionHidden, setFocusedCollection } = useCollectionStore()
   const navigate = useNavigate()
-  const names = collections.map(c => c.name)
+  const location = useLocation()
+  const names = collections.map((c) => c.name)
 
-  const select = (name: string) => {
-    setCollection(name)
-    navigate(`/${name}/calendar`)
+  const isCalendarMode = viewMode === 'calendar' || location.pathname.startsWith('/calendar')
+  const visible = collections.filter((c) => c.name !== 'capture')
+
+  const handleRowClick = (col: Collection) => {
+    setCollection(col.name)
+    navigate(`/${col.name}/todos`)
   }
 
   return (
     <aside
       className="flex flex-col h-full select-none"
-      style={{ width: 'var(--app-sidebar-width)', background: 'var(--sidebar)', borderRight: '1px solid var(--sidebar-border)', flexShrink: 0 }}
+      style={{
+        width: 'var(--app-sidebar-width)',
+        background: 'var(--sidebar)',
+        borderRight: '1px solid var(--sidebar-border)',
+        flexShrink: 0,
+      }}
     >
-      {/* Brand */}
-      <div className="flex items-center gap-2.5 px-5 pt-5 pb-4">
-        <div className="flex items-center justify-center w-7 h-7 rounded-lg" style={{ background: '#2563eb' }}>
-          <CalendarDays className="w-4 h-4 text-white" strokeWidth={2} />
-        </div>
-        <span className="text-sm font-semibold tracking-tight" style={{ color: 'oklch(0.92 0 0)' }}>
-          CalStakk
+      {/* Section label */}
+      <div style={{ padding: '20px 12px 8px' }}>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 600,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            color: '#3A3A46',
+            paddingLeft: 10,
+          }}
+        >
+          Projects
         </span>
       </div>
 
-      {/* Collections */}
-      <div className="px-3 mb-1">
-        <p className="px-2 text-[10px] font-semibold uppercase tracking-widest mb-2" style={{ color: 'oklch(0.4 0 0)' }}>
-          Collections
-        </p>
-      </div>
+      {/* Collection list */}
+      <nav className="flex-1 overflow-y-auto" style={{ padding: '0 8px' }}>
+        <div className="flex flex-col" style={{ gap: 1 }}>
+          {visible.map((col) => {
+            const color = collectionColor(names, col.name)
+            const isActive = activeCollection === col.name
+            const isHidden = hiddenCollections.includes(col.name)
+            const isFocused = focusedCollection === col.name
 
-      <nav className="flex-1 px-3 flex flex-col gap-0.5 overflow-y-auto">
-        {collections.map((col) => {
-          const color = collectionColor(names, col.name)
-          const isActive = activeCollection === col.name
-          return (
-            <button
-              key={col.name}
-              onClick={() => select(col.name)}
-              className={cn(
-                'group flex items-center gap-2.5 w-full rounded-md px-2.5 py-2 text-left transition-all duration-100',
-                isActive
-                  ? 'text-white'
-                  : 'hover:text-white'
-              )}
-              style={{
-                background: isActive ? 'rgba(255,255,255,0.08)' : 'transparent',
-                color: isActive ? 'oklch(0.92 0 0)' : 'oklch(0.5 0 0)',
-              }}
-              onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.05)' }}
-              onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
-            >
-              {/* Color dot */}
-              <span
-                className="flex-shrink-0 w-2.5 h-2.5 rounded-full transition-transform duration-100"
-                style={{
-                  background: color.bg,
-                  transform: isActive ? 'scale(1.2)' : 'scale(1)',
-                  boxShadow: isActive ? `0 0 0 3px ${color.bg}22` : 'none',
-                }}
-              />
-              <span
-                className="flex-1 text-sm font-medium truncate"
-                style={{ color: isActive ? 'oklch(0.93 0 0)' : 'inherit' }}
+            return (
+              <div
+                key={col.name}
+                className="sidebar-row"
+                data-active={isActive}
+                onClick={() => handleRowClick(col)}
+                style={{ opacity: isCalendarMode && isHidden && !isFocused ? 0.4 : 1 }}
               >
-                {col.display_name}
-              </span>
-              {isActive && (
+                {/* Color dot */}
                 <span
-                  className="flex-shrink-0 w-1.5 h-1.5 rounded-full"
-                  style={{ background: color.bg }}
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    background: color.bg,
+                    flexShrink: 0,
+                    boxShadow: isFocused ? `0 0 0 2px ${color.bg}44` : 'none',
+                    transition: 'box-shadow 150ms',
+                  }}
                 />
-              )}
-            </button>
-          )
-        })}
 
-        {collections.length === 0 && (
-          <p className="px-2 py-3 text-xs" style={{ color: 'oklch(0.4 0 0)' }}>
-            No collections yet.
-          </p>
-        )}
+                {/* Name */}
+                <span
+                  style={{
+                    fontSize: 13,
+                    fontWeight: isActive ? 500 : 400,
+                    flex: 1,
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    color: isActive ? 'rgba(255,255,255,0.88)' : 'inherit',
+                  }}
+                >
+                  {col.display_name}
+                </span>
+
+                {/* Calendar-mode controls (show on hover via CSS) */}
+                {isCalendarMode && (
+                  <div
+                    className="sidebar-row-actions"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      className="sidebar-row-icon-btn"
+                      data-active={isFocused}
+                      title={isFocused ? 'Unfocus' : 'Focus only this'}
+                      onClick={() => setFocusedCollection(col.name)}
+                    >
+                      <Crosshair style={{ width: 12, height: 12 }} />
+                    </button>
+                    <button
+                      className="sidebar-row-icon-btn"
+                      data-active={isHidden}
+                      title={isHidden ? 'Show in calendar' : 'Hide from calendar'}
+                      onClick={() => toggleCollectionHidden(col.name)}
+                    >
+                      {isHidden
+                        ? <EyeOff style={{ width: 12, height: 12 }} />
+                        : <Eye style={{ width: 12, height: 12 }} />}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+
+          {visible.length === 0 && (
+            <p style={{ padding: '8px 10px', fontSize: 12, color: '#3A3A46' }}>
+              No projects yet.
+            </p>
+          )}
+        </div>
       </nav>
 
-      {/* Footer */}
-      <div className="p-3 mt-auto" style={{ borderTop: '1px solid var(--sidebar-border)' }}>
-        <p className="px-2 text-[10px]" style={{ color: 'oklch(0.35 0 0)' }}>
-          CalStakk · v2
-        </p>
+      {/* Profile / settings footer */}
+      <div
+        style={{
+          borderTop: '1px solid var(--sidebar-border)',
+          padding: '10px 8px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}
+      >
+        <div
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: '50%',
+            background: 'rgba(255,255,255,0.08)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <User style={{ width: 14, height: 14, color: '#52525E' }} />
+        </div>
+        <span
+          style={{
+            fontSize: 12,
+            fontWeight: 500,
+            color: '#52525E',
+            flex: 1,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Account
+        </span>
+        <button
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 26,
+            height: 26,
+            borderRadius: 6,
+            border: 'none',
+            background: 'transparent',
+            color: '#3A3A46',
+            cursor: 'pointer',
+            transition: 'color 100ms, background 100ms',
+            flexShrink: 0,
+          }}
+          onMouseEnter={(e) => {
+            ;(e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.7)'
+            ;(e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.05)'
+          }}
+          onMouseLeave={(e) => {
+            ;(e.currentTarget as HTMLElement).style.color = '#3A3A46'
+            ;(e.currentTarget as HTMLElement).style.background = 'transparent'
+          }}
+          title="Settings"
+        >
+          <Settings style={{ width: 14, height: 14 }} />
+        </button>
       </div>
     </aside>
   )

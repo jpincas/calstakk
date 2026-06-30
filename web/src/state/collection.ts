@@ -1,21 +1,36 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { DataType } from '@/types'
+import type { ViewMode } from '@/types'
 
 interface CollectionState {
   activeCollection: string | null
-  activeDataType: DataType
+  viewMode: ViewMode
+  hiddenCollections: string[]
+  focusedCollection: string | null
   setCollection: (name: string) => void
-  setDataType: (t: DataType) => void
+  setViewMode: (mode: ViewMode) => void
+  toggleCollectionHidden: (name: string) => void
+  setFocusedCollection: (name: string | null) => void
 }
 
 export const useCollectionStore = create<CollectionState>()(
   persist(
     (set) => ({
       activeCollection: null,
-      activeDataType: 'calendar',
+      viewMode: 'today',
+      hiddenCollections: [],
+      focusedCollection: null,
       setCollection: (name) => set({ activeCollection: name }),
-      setDataType: (t) => set({ activeDataType: t }),
+      setViewMode: (mode) => set({ viewMode: mode }),
+      toggleCollectionHidden: (name) =>
+        set((s) => ({
+          hiddenCollections: s.hiddenCollections.includes(name)
+            ? s.hiddenCollections.filter((n) => n !== name)
+            : [...s.hiddenCollections, name],
+          focusedCollection: s.focusedCollection === name ? null : s.focusedCollection,
+        })),
+      setFocusedCollection: (name) =>
+        set((s) => ({ focusedCollection: s.focusedCollection === name ? null : name })),
     }),
     { name: 'calstakk-collection' }
   )

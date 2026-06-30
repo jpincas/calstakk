@@ -35,3 +35,4 @@ export interface Todo {
 }
 
 export type DataType = 'calendar' | 'todos'
+export type ViewMode = 'inbox' | 'today' | 'todos' | 'calendar' | 'split'

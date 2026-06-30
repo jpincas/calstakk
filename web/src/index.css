@@ -49,44 +49,51 @@
 }
 
 :root {
-    --background: oklch(0.97 0 0);
-    --foreground: oklch(0.12 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.12 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.12 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.96 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.96 0 0);
-    --muted-foreground: oklch(0.5 0 0);
-    --accent: oklch(0.96 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.91 0 0);
-    --input: oklch(0.91 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
+    /* ── Dark base ────────────────────────────────────────────── */
+    --background: #18181C;
+    --foreground: rgba(255, 255, 255, 0.88);
+    --card: #1F1F24;
+    --card-foreground: rgba(255, 255, 255, 0.88);
+    --popover: #252529;
+    --popover-foreground: rgba(255, 255, 255, 0.88);
+    --primary: rgba(255, 255, 255, 0.88);
+    --primary-foreground: #141417;
+    --secondary: #252529;
+    --secondary-foreground: rgba(255, 255, 255, 0.6);
+    --muted: #252529;
+    --muted-foreground: #8A8A96;
+    --accent: #26262B;
+    --accent-foreground: rgba(255, 255, 255, 0.88);
+    --destructive: #E35E5E;
+    --border: rgba(255, 255, 255, 0.08);
+    --input: rgba(255, 255, 255, 0.08);
+    --ring: rgba(255, 255, 255, 0.2);
+    --chart-1: #6366F1;
+    --chart-2: #10B981;
+    --chart-3: #F59E0B;
+    --chart-4: #E35E5E;
+    --chart-5: #8B5CF6;
     --radius: 0.5rem;
-    --sidebar: oklch(0.09 0.01 260);
-    --sidebar-foreground: oklch(0.65 0 0);
-    --sidebar-primary: oklch(0.985 0 0);
-    --sidebar-primary-foreground: oklch(0.09 0.01 260);
-    --sidebar-accent: oklch(0.15 0.01 260);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(0.18 0.01 260);
-    --sidebar-ring: oklch(0.35 0 0);
 
-    /* App shell */
-    --app-sidebar-width: 216px;
-    --app-nav-height: 60px;
-    --surface-shadow: 0 1px 3px rgb(0 0 0 / 0.07), 0 1px 2px rgb(0 0 0 / 0.04);
-    --surface-shadow-md: 0 4px 12px rgb(0 0 0 / 0.08), 0 2px 4px rgb(0 0 0 / 0.04);
+    /* ── Sidebar ──────────────────────────────────────────────── */
+    --sidebar: #141417;
+    --sidebar-foreground: #8A8A96;
+    --sidebar-primary: rgba(255, 255, 255, 0.88);
+    --sidebar-primary-foreground: #141417;
+    --sidebar-accent: #1C1C21;
+    --sidebar-accent-foreground: rgba(255, 255, 255, 0.88);
+    --sidebar-border: rgba(255, 255, 255, 0.06);
+    --sidebar-ring: rgba(255, 255, 255, 0.2);
+
+    /* ── Top nav ──────────────────────────────────────────────── */
+    --nav: #0E0E11;
+    --nav-border: rgba(255, 255, 255, 0.06);
+
+    /* ── App shell ────────────────────────────────────────────── */
+    --app-sidebar-width: 200px;
+    --app-nav-height: 44px;
+    --surface-shadow: 0 1px 3px rgb(0 0 0 / 0.3), 0 1px 2px rgb(0 0 0 / 0.2);
+    --surface-shadow-md: 0 4px 16px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.3);
 }
 
 @layer base {
@@ -95,20 +102,105 @@
   html { @apply font-sans; }
 }
 
-/* ─── React Big Calendar overrides ────────────────────────── */
+/* ─── Nav button colored hover (uses per-item --btn-color) ── */
+.nav-btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  color: #3A3A46;
+  background: transparent;
+  transition: color 120ms ease, background 120ms ease;
+  cursor: pointer;
+  border: none;
+  user-select: none;
+}
+.nav-btn:hover {
+  color: var(--btn-color);
+  background: color-mix(in srgb, var(--btn-color) 10%, transparent);
+}
+.nav-btn[data-active="true"] {
+  color: var(--btn-color);
+  background: color-mix(in srgb, var(--btn-color) 13%, transparent);
+}
+
+/* ─── Sidebar collection row ──────────────────────────────── */
+.sidebar-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 7px;
+  color: #52525E;
+  background: transparent;
+  transition: color 100ms, background 100ms;
+  cursor: pointer;
+  border: none;
+  text-align: left;
+  user-select: none;
+}
+.sidebar-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.7);
+}
+.sidebar-row[data-active="true"] {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.88);
+}
+.sidebar-row-actions {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.sidebar-row:hover .sidebar-row-actions {
+  display: flex;
+}
+.sidebar-row-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: #3A3A46;
+  background: transparent;
+  transition: color 100ms, background 100ms;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.sidebar-row-icon-btn:hover {
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.06);
+}
+.sidebar-row-icon-btn[data-active="true"] {
+  color: rgba(255, 255, 255, 0.88);
+}
+
+/* ─── React Big Calendar — dark theme ─────────────────────── */
 .rbc-calendar {
   font-family: 'Geist Variable', sans-serif;
   font-size: 13px;
+  color: rgba(255, 255, 255, 0.88);
+  background: transparent;
 }
 .rbc-toolbar {
-  display: none; /* we use our own toolbar */
+  display: none;
 }
 .rbc-month-view,
 .rbc-time-view,
 .rbc-agenda-view {
-  border: 1px solid #e5e7eb;
+  border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 10px;
   overflow: hidden;
+  background: #1F1F24;
 }
 .rbc-header {
   padding: 10px 4px;
@@ -116,24 +208,25 @@
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #9ca3af;
-  border-bottom: 1px solid #e5e7eb;
-  background: #fafafa;
+  color: #52525E;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  background: #18181C;
 }
-.rbc-header + .rbc-header { border-left: 1px solid #e5e7eb; }
-.rbc-month-row { border-top: 1px solid #e5e7eb; }
-.rbc-day-bg + .rbc-day-bg { border-left: 1px solid #e5e7eb; }
-.rbc-off-range-bg { background: #f9fafb; }
-.rbc-today { background: #f0f9ff; }
+.rbc-header + .rbc-header { border-left: 1px solid rgba(255, 255, 255, 0.07); }
+.rbc-month-row { border-top: 1px solid rgba(255, 255, 255, 0.05); }
+.rbc-day-bg + .rbc-day-bg { border-left: 1px solid rgba(255, 255, 255, 0.05); }
+.rbc-off-range-bg { background: #141417; }
+.rbc-today { background: rgba(99, 102, 241, 0.07); }
 .rbc-date-cell {
   padding: 6px 8px;
   font-size: 12px;
   font-weight: 500;
-  color: #374151;
+  color: rgba(255, 255, 255, 0.4);
   text-align: right;
 }
+.rbc-date-cell.rbc-off-range { color: rgba(255, 255, 255, 0.18); }
 .rbc-date-cell.rbc-now a {
-  background: var(--cal-accent, #2563eb);
+  background: var(--cal-accent, #6366F1);
   color: white;
   border-radius: 50%;
   width: 22px;
@@ -149,37 +242,50 @@
   font-size: 12px;
   font-weight: 500;
   border: none !important;
-  background: var(--cal-accent, #2563eb) !important;
   color: white !important;
 }
-.rbc-event:focus { outline: none; box-shadow: 0 0 0 2px var(--cal-accent, #2563eb), 0 0 0 4px rgba(37,99,235,0.2); }
-.rbc-event-label { font-size: 11px; opacity: 0.85; }
-.rbc-show-more { font-size: 11px; color: var(--cal-accent, #2563eb); font-weight: 600; padding: 2px 8px; }
-.rbc-time-header { border-bottom: 1px solid #e5e7eb; }
-.rbc-time-content { border-top: none; }
-.rbc-time-slot { font-size: 11px; color: #9ca3af; }
-.rbc-timeslot-group { border-bottom: 1px solid #f3f4f6; }
-.rbc-current-time-indicator { background: var(--cal-accent, #2563eb); }
-.rbc-allday-cell { border-bottom: 1px solid #e5e7eb; }
-
-/* ─── Utility classes ─────────────────────────────────────── */
-.cs-card {
-  background: white;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  box-shadow: var(--surface-shadow);
+.rbc-event:focus { outline: none; }
+.rbc-event-label { font-size: 11px; opacity: 0.8; }
+.rbc-show-more {
+  font-size: 11px;
+  color: var(--cal-accent, #6366F1);
+  font-weight: 600;
+  padding: 2px 8px;
+  background: transparent;
 }
+.rbc-time-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  background: #18181C;
+}
+.rbc-time-content {
+  border-top: none;
+  background: #1F1F24;
+}
+.rbc-time-slot { font-size: 11px; color: #3A3A46; }
+.rbc-timeslot-group { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+.rbc-current-time-indicator { background: #6366F1; height: 2px; }
+.rbc-allday-cell { border-bottom: 1px solid rgba(255, 255, 255, 0.07); }
+.rbc-time-gutter .rbc-time-slot { color: #3A3A46; }
+.rbc-time-view .rbc-time-header-cell .rbc-header { background: #18181C; }
+.rbc-agenda-view table { border-color: rgba(255, 255, 255, 0.07); }
+.rbc-agenda-date-cell, .rbc-agenda-time-cell { color: #52525E; }
+.rbc-agenda-event-cell { color: rgba(255, 255, 255, 0.88); }
 
+/* ─── Card utility ────────────────────────────────────────── */
+.cs-card {
+  background: #1F1F24;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+}
 .cs-card-hover {
-  transition: box-shadow 0.15s ease, transform 0.15s ease;
+  transition: border-color 150ms ease;
 }
 .cs-card-hover:hover {
-  box-shadow: var(--surface-shadow-md);
-  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
-/* scrollbar styling */
-::-webkit-scrollbar { width: 6px; height: 6px; }
+/* ─── Scrollbar ───────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); }
