@@ -12,6 +12,7 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import {
   calContentType,
   objectPath,
+  OWNER_EMAIL,
   testDTEND,
   testDTSTAMP,
   testDTSTART,
@@ -1385,13 +1386,13 @@ Deno.test("RFC 5545 §3.8.4.1 ATTENDEE roundtrips on VEVENT and VTODO", async ()
     await s.putEvent(
       "attendee-col",
       evtUID,
-      "ORGANIZER:mailto:organizer@example.com",
+      `ORGANIZER:mailto:${OWNER_EMAIL}`,
       "ATTENDEE;PARTSTAT=ACCEPTED:mailto:attendee@example.com",
     );
     await s.putTodo(
       "attendee-col",
       todoUID,
-      "ORGANIZER:mailto:organizer@example.com",
+      `ORGANIZER:mailto:${OWNER_EMAIL}`,
       "ATTENDEE;ROLE=REQ-PARTICIPANT:mailto:worker@example.com",
     );
 
@@ -1414,16 +1415,16 @@ Deno.test("RFC 5545 §3.8.4.3 ORGANIZER roundtrips on VEVENT and VTODO", async (
     await s.mkcol("organizer-col");
     const evtUID = "organizer-vevent";
     const todoUID = "organizer-vtodo";
-    await s.putEvent("organizer-col", evtUID, "ORGANIZER:mailto:boss@example.com");
-    await s.putTodo("organizer-col", todoUID, "ORGANIZER:mailto:lead@example.com");
+    await s.putEvent("organizer-col", evtUID, `ORGANIZER:mailto:${OWNER_EMAIL}`);
+    await s.putTodo("organizer-col", todoUID, `ORGANIZER:mailto:${OWNER_EMAIL}`);
 
     const evtResp = await s.do("GET", objectPath("organizer-col", evtUID));
     assertEquals(evtResp.status, 200);
-    assertStringIncludes(evtResp.body, "ORGANIZER:mailto:boss@example.com");
+    assertStringIncludes(evtResp.body, `ORGANIZER:mailto:${OWNER_EMAIL}`);
 
     const todoResp = await s.do("GET", objectPath("organizer-col", todoUID));
     assertEquals(todoResp.status, 200);
-    assertStringIncludes(todoResp.body, "ORGANIZER:mailto:lead@example.com");
+    assertStringIncludes(todoResp.body, `ORGANIZER:mailto:${OWNER_EMAIL}`);
   });
 });
 

@@ -7,15 +7,24 @@
 import { assertEquals } from "@std/assert";
 import { createHandler } from "../../src/protocol.ts";
 import { MemoryStorage } from "../../src/storage.ts";
-import { loadConfig } from "../../src/config.ts";
+import { hashPassword } from "../../src/auth.ts";
+import { DEFAULT_CALENDAR_NAME } from "../../src/types.ts";
+import type { Config } from "../../src/config.ts";
 import { find, findAll, findDeep, parseXML } from "../../src/xmlparse.ts";
 
 const NS_DAV = "DAV:";
 
+// ─── Test owner credentials ───────────────────────────────────────────────────
+
+// Owner acts as organizer in scheduling tests; email matches ORGANIZER: in ICS fixtures.
+const OWNER_USERNAME = "owner";
+const OWNER_PASSWORD = "ownerpass";
+export const OWNER_EMAIL = "org@example.com";
+
 // ─── CalDAV path constants ────────────────────────────────────────────────────
 
-export const principalPath = "/calstakk";
-export const calendarHomePath = "/calstakk/calendars";
+export const principalPath = `/principals/${OWNER_USERNAME}`;
+export const calendarHomePath = `/calendars/${OWNER_USERNAME}`;
 
 export function collectionPath(name: string): string {
   return `${calendarHomePath}/${name}`;
@@ -23,6 +32,23 @@ export function collectionPath(name: string): string {
 
 export function objectPath(collection: string, uid: string): string {
   return `${calendarHomePath}/${collection}/${uid}.ics`;
+}
+
+/** Build a calendar path for a non-owner user. */
+export function userObjectPath(username: string, collection: string, uid: string): string {
+  return `/calendars/${username}/${collection}/${uid}.ics`;
+}
+
+export function userCollectionPath(username: string, collection: string): string {
+  return `/calendars/${username}/${collection}`;
+}
+
+export function userPrincipalPath(username: string): string {
+  return `/principals/${username}`;
+}
+
+export function userInboxPath(username: string): string {
+  return `/calendars/${username}/inbox`;
 }
 
 // ─── iCalendar fixture builders ───────────────────────────────────────────────
@@ -174,6 +200,15 @@ export function withHeaders(...maps: Record<string, string>[]): Record<string, s
 
 // ─── Multistatus XML parsing ──────────────────────────────────────────────────
 
+import type { XNode } from "../../src/xmlparse.ts";
+
+/** Collect all text from a node and its descendants (depth-first). */
+function allText(node: XNode): string {
+  let t = node.text;
+  for (const c of node.children) t += allText(c);
+  return t;
+}
+
 export class MSProp {
   constructor(
     public readonly status: number,
@@ -246,7 +281,7 @@ export function parseMultistatus(body: string): Multistatus {
 
       for (const child of propEl.children) {
         const childNames = child.children.map((c) => c.local);
-        const msProp = new MSProp(code, child.text.trim(), childNames);
+        const msProp = new MSProp(code, allText(child).trim(), childNames);
         props.set(`${child.ns}:${child.local}`, msProp);
         props.set(child.local, msProp); // index by local name too
       }
@@ -292,20 +327,47 @@ export class TestServer {
   private readonly baseURL: string;
   private readonly server: Deno.HttpServer<Deno.NetAddr>;
   private readonly controller: AbortController;
+  private readonly storage: MemoryStorage;
 
   private constructor(
     baseURL: string,
     server: Deno.HttpServer<Deno.NetAddr>,
     controller: AbortController,
+    storage: MemoryStorage,
   ) {
     this.baseURL = baseURL;
     this.server = server;
     this.controller = controller;
+    this.storage = storage;
   }
 
-  static create(): TestServer {
+  static async create(): Promise<TestServer> {
     const storage = new MemoryStorage();
-    const handler = createHandler(storage, loadConfig());
+
+    // Pre-create owner user with hashed password and default calendar.
+    const ownerHash = await hashPassword(OWNER_PASSWORD);
+    await storage.createUser({
+      username: OWNER_USERNAME,
+      passwordHash: ownerHash,
+      displayName: "Test Owner",
+      email: OWNER_EMAIL,
+      timezone: "UTC",
+      isAdmin: true,
+    });
+    await storage.createCalendar(OWNER_USERNAME, DEFAULT_CALENDAR_NAME, "Default Calendar");
+
+    const testConfig: Config = {
+      server: { host: "localhost", port: 0, kvPath: undefined, webDir: undefined },
+      user: {
+        username: OWNER_USERNAME,
+        password: OWNER_PASSWORD,
+        displayName: "Test Owner",
+        email: OWNER_EMAIL,
+        timezone: "UTC",
+      },
+    };
+
+    const handler = createHandler(storage, testConfig);
     const controller = new AbortController();
     const server = Deno.serve(
       {
@@ -316,7 +378,7 @@ export class TestServer {
       handler,
     );
     const port = server.addr.port;
-    return new TestServer(`http://localhost:${port}`, server, controller);
+    return new TestServer(`http://localhost:${port}`, server, controller, storage);
   }
 
   async shutdown(): Promise<void> {
@@ -324,23 +386,57 @@ export class TestServer {
     await this.server.finished;
   }
 
-  /** Issue an HTTP request. Redirects are followed. */
+  /** Create a secondary user (non-owner) in the server's storage. */
+  async createUser(username: string, email: string, password = "testpass"): Promise<void> {
+    const hash = await hashPassword(password);
+    await this.storage.createUser({
+      username,
+      passwordHash: hash,
+      displayName: username,
+      email,
+      timezone: "UTC",
+      isAdmin: false,
+    });
+    await this.storage.createCalendar(username, DEFAULT_CALENDAR_NAME, "Default Calendar");
+  }
+
+  /** Issue an HTTP request as the owner. Redirects are followed. */
   async do(
     method: string,
     path: string,
     headers: Record<string, string> = {},
     body?: string,
   ): Promise<RawResponse> {
+    const ownerAuth = "Basic " + btoa(`${OWNER_USERNAME}:${OWNER_PASSWORD}`);
     const resp = await fetch(`${this.baseURL}${path}`, {
       method,
-      headers,
+      headers: { Authorization: ownerAuth, ...headers },
       body: body ?? undefined,
       redirect: "follow",
     });
     return { status: resp.status, headers: resp.headers, body: await resp.text() };
   }
 
-  /** Issue an HTTP request WITHOUT following redirects. */
+  /** Issue an HTTP request as a specific user. Redirects are followed. */
+  async doAs(
+    username: string,
+    password: string,
+    method: string,
+    path: string,
+    headers: Record<string, string> = {},
+    body?: string,
+  ): Promise<RawResponse> {
+    const authHeader = "Basic " + btoa(`${username}:${password}`);
+    const resp = await fetch(`${this.baseURL}${path}`, {
+      method,
+      headers: { Authorization: authHeader, ...headers },
+      body: body ?? undefined,
+      redirect: "follow",
+    });
+    return { status: resp.status, headers: resp.headers, body: await resp.text() };
+  }
+
+  /** Issue an HTTP request WITHOUT following redirects and WITHOUT auth (for 401 tests). */
   async doNoRedirect(
     method: string,
     path: string,
@@ -356,11 +452,19 @@ export class TestServer {
     return { status: resp.status, headers: resp.headers, body: await resp.text() };
   }
 
-  /** Create a calendar collection (MKCOL) and assert 201. */
+  /** Create a calendar collection (MKCOL) for owner and assert 201. */
   async mkcol(name: string): Promise<string> {
     const path = collectionPath(name);
     const resp = await this.do("MKCOL", path);
     assertEquals(resp.status, 201, `MKCOL ${path} failed: ${resp.body}`);
+    return path;
+  }
+
+  /** Create a MKCALENDAR collection for a specific user. */
+  async mkcalAs(username: string, password: string, colName: string): Promise<string> {
+    const path = userCollectionPath(username, colName);
+    const resp = await this.doAs(username, password, "MKCALENDAR", path);
+    assertEquals(resp.status, 201, `MKCALENDAR ${path} failed: ${resp.body}`);
     return path;
   }
 
@@ -399,7 +503,7 @@ export class TestServer {
 export async function withServer(
   fn: (s: TestServer) => Promise<void>,
 ): Promise<void> {
-  const s = TestServer.create();
+  const s = await TestServer.create();
   try {
     await fn(s);
   } finally {

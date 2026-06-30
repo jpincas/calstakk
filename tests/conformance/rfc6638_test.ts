@@ -14,6 +14,7 @@ import {
   calContentType,
   nsCalDAV,
   objectPath,
+  collectionPath,
   parseMultistatus,
   principalPath,
   propfindAllprop,
@@ -21,9 +22,14 @@ import {
   testDTEND,
   testDTSTAMP,
   testDTSTART,
+  userCollectionPath,
+  userObjectPath,
+  userInboxPath,
+  userPrincipalPath,
   withHeaders,
   withServer,
   xmlContentType,
+  OWNER_EMAIL,
 } from "./harness.ts";
 
 // ─── §2 Scheduling principal properties ───────────────────────────────────────
@@ -197,7 +203,7 @@ Deno.test("RFC 6638 §4 PUT with ORGANIZER and ATTENDEE must not cause 5xx", asy
       `DTSTART:${testDTSTART}\r\n` +
       `DTEND:${testDTEND}\r\n` +
       "SUMMARY:Scheduled Meeting\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:attendee@example.com\r\n" +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
@@ -227,7 +233,7 @@ Deno.test("RFC 6638 §7 free-busy POST to outbox returns 200 or 207", async () =
       `DTSTAMP:${testDTSTAMP}\r\n` +
       "DTSTART:20260101T000000Z\r\n" +
       "DTEND:20260201T000000Z\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE:mailto:user@example.com\r\n" +
       "END:VFREEBUSY\r\n" +
       "END:VCALENDAR\r\n";
@@ -476,7 +482,7 @@ Deno.test(
         `DTSTART:${testDTSTART}\r\n` +
         `DTEND:${testDTEND}\r\n` +
         "SUMMARY:Sched Test\r\n" +
-        "ORGANIZER:mailto:organizer@example.com\r\n" +
+        `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
         "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:attendee@example.com\r\n" +
         "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
@@ -511,7 +517,7 @@ Deno.test(
         `DTSTART:${testDTSTART}\r\n` +
         `DTEND:${testDTEND}\r\n` +
         "SUMMARY:Client Agent Test\r\n" +
-        "ORGANIZER:mailto:organizer@example.com\r\n" +
+        `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
         "ATTENDEE;SCHEDULE-AGENT=CLIENT;PARTSTAT=NEEDS-ACTION:mailto:attendee@example.com\r\n" +
         "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
@@ -554,7 +560,7 @@ Deno.test(
         `DTSTART:${testDTSTART}\r\n` +
         `DTEND:${testDTEND}\r\n` +
         "SUMMARY:None Agent Test\r\n" +
-        "ORGANIZER:mailto:organizer@example.com\r\n" +
+        `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
         "ATTENDEE;SCHEDULE-AGENT=NONE;PARTSTAT=NEEDS-ACTION:mailto:attendee@example.com\r\n" +
         "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
@@ -638,6 +644,8 @@ Deno.test(
   "RFC 6638 §3.2.1.3 DELETE of organizer scheduling object resource triggers Remove scheduling operation",
   async () => {
     await withServer(async (s) => {
+      // Set up attendee user so iTIP can be delivered
+      await s.createUser("att-313", "att@example.com", "attpass");
       await s.mkcol("remove-sched-col");
       const uid = "remove-sched-001";
       const path = objectPath("remove-sched-col", uid);
@@ -663,30 +671,16 @@ Deno.test(
       const getResp = await s.do("GET", path);
       assertEquals(getResp.status, 404, "resource must not exist after DELETE");
 
-      // Verify Remove scheduling occurred: attendee inbox must receive a CANCEL
-      const pfInbox = await s.do(
+      // Verify Remove scheduling occurred: attendee (att@example.com) must have CANCEL in their inbox
+      const attInboxURL = userInboxPath("att-313");
+      const inboxItems = await s.doAs(
+        "att-313", "attpass",
         "PROPFIND",
-        principalPath,
-        withHeaders({ Depth: "0" }, xmlContentType()),
-        propfindProps(nsCalDAV, "schedule-inbox-URL"),
-      );
-      assertEquals(
-        parseMultistatus(pfInbox.body).response(principalPath)?.propStatus("schedule-inbox-URL"),
-        200,
-        "schedule-inbox-URL must be present to verify Remove scheduling delivery",
-      );
-      const inboxURL =
-        parseMultistatus(pfInbox.body).response(principalPath)?.prop("schedule-inbox-URL")?.text() ?? "";
-      assertEquals(inboxURL !== "", true, "schedule-inbox-URL must be non-empty to check CANCEL delivery");
-
-      const inboxItems = await s.do(
-        "PROPFIND",
-        inboxURL,
+        attInboxURL,
         withHeaders({ Depth: "1" }, xmlContentType()),
         propfindAllprop(),
       );
       assertEquals(inboxItems.status, 207);
-      // Inbox must contain a CANCEL iTIP message for the deleted event
       assertEquals(
         inboxItems.body.includes("CANCEL") || parseMultistatus(inboxItems.body).len() > 1,
         true,
@@ -702,11 +696,17 @@ Deno.test(
   "RFC 6638 §3.2.2.1 Attendee PUT changing own PARTSTAT succeeds; forbidden field change returns 403 allowed-attendee-scheduling-object-change",
   async () => {
     await withServer(async (s) => {
-      await s.mkcol("att-change-col");
-      const uid = "att-change-001";
-      const path = objectPath("att-change-col", uid);
+      // Set up two users: organizer (owner=org@example.com) and attendee
+      await s.createUser("att-3221", "att@example.com", "attpass");
+      const attCol = "att-change-col";
+      await s.mkcol(attCol); // organizer's collection
+      await s.mkcalAs("att-3221", "attpass", attCol); // attendee's collection
 
-      // Organizer creates the event
+      const uid = "att-change-001";
+      const orgPath = objectPath(attCol, uid);
+      const attPath = userObjectPath("att-3221", attCol, uid);
+
+      // Organizer (owner) creates the event
       const orgICS =
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalStakk//ConformanceTest//EN\r\n" +
         "BEGIN:VEVENT\r\n" +
@@ -718,9 +718,23 @@ Deno.test(
         "ORGANIZER:mailto:org@example.com\r\n" +
         "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:att@example.com\r\n" +
         "END:VEVENT\r\nEND:VCALENDAR\r\n";
-      await s.do("PUT", path, calContentType(), orgICS);
+      await s.do("PUT", orgPath, calContentType(), orgICS);
 
-      // Attendee changes PARTSTAT — MUST be allowed (2xx)
+      // Attendee stores initial copy of the event in their own calendar
+      const attInitial =
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalStakk//ConformanceTest//EN\r\n" +
+        "BEGIN:VEVENT\r\n" +
+        `UID:${uid}\r\n` +
+        `DTSTAMP:${testDTSTAMP}\r\n` +
+        `DTSTART:${testDTSTART}\r\n` +
+        `DTEND:${testDTEND}\r\n` +
+        "SUMMARY:Meeting\r\n" +
+        "ORGANIZER:mailto:org@example.com\r\n" +
+        "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:att@example.com\r\n" +
+        "END:VEVENT\r\nEND:VCALENDAR\r\n";
+      await s.doAs("att-3221", "attpass", "PUT", attPath, calContentType(), attInitial);
+
+      // Attendee changes own PARTSTAT — MUST be allowed (2xx)
       const attPARTSTATChange =
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalStakk//ConformanceTest//EN\r\n" +
         "BEGIN:VEVENT\r\n" +
@@ -732,7 +746,7 @@ Deno.test(
         "ORGANIZER:mailto:org@example.com\r\n" +
         "ATTENDEE;PARTSTAT=ACCEPTED:mailto:att@example.com\r\n" +
         "END:VEVENT\r\nEND:VCALENDAR\r\n";
-      const partstatResp = await s.do("PUT", path, calContentType(), attPARTSTATChange);
+      const partstatResp = await s.doAs("att-3221", "attpass", "PUT", attPath, calContentType(), attPARTSTATChange);
       assertEquals(
         partstatResp.status >= 200 && partstatResp.status < 300,
         true,
@@ -745,13 +759,13 @@ Deno.test(
         "BEGIN:VEVENT\r\n" +
         `UID:${uid}\r\n` +
         `DTSTAMP:${testDTSTAMP}\r\n` +
-        "DTSTART:20260120T100000Z\r\n" + // changed DTSTART — forbidden for attendee
+        "DTSTART:20260115T090000Z\r\n" + // changed DTSTART (still before DTEND) — forbidden for attendee
         `DTEND:${testDTEND}\r\n` +
         "SUMMARY:Meeting\r\n" +
         "ORGANIZER:mailto:org@example.com\r\n" +
         "ATTENDEE;PARTSTAT=ACCEPTED:mailto:att@example.com\r\n" +
         "END:VEVENT\r\nEND:VCALENDAR\r\n";
-      const forbiddenResp = await s.do("PUT", path, calContentType(), attForbiddenChange);
+      const forbiddenResp = await s.doAs("att-3221", "attpass", "PUT", attPath, calContentType(), attForbiddenChange);
       assertEquals(
         forbiddenResp.status,
         403,
@@ -772,11 +786,14 @@ Deno.test(
   "RFC 6638 §3.2.2.3 Attendee PARTSTAT change causes SCHEDULE-STATUS on ORGANIZER property after server processes reply",
   async () => {
     await withServer(async (s) => {
+      await s.createUser("att-3223", "att@example.com", "attpass");
       await s.mkcol("att-reply-col");
+      await s.mkcalAs("att-3223", "attpass", "att-reply-col");
       const uid = "att-reply-001";
       const orgPath = objectPath("att-reply-col", uid);
+      const attPath = userObjectPath("att-3223", "att-reply-col", uid);
 
-      // Organizer creates event
+      // Organizer (owner) creates event — server delivers REQUEST to attendee inbox
       const orgICS =
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalStakk//ConformanceTest//EN\r\n" +
         "BEGIN:VEVENT\r\n" +
@@ -790,7 +807,20 @@ Deno.test(
         "END:VEVENT\r\nEND:VCALENDAR\r\n";
       await s.do("PUT", orgPath, calContentType(), orgICS);
 
-      // Attendee replies by changing PARTSTAT on their copy
+      // Attendee stores their copy then sends a reply (PARTSTAT=ACCEPTED)
+      const attInitial =
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalStakk//ConformanceTest//EN\r\n" +
+        "BEGIN:VEVENT\r\n" +
+        `UID:${uid}\r\n` +
+        `DTSTAMP:${testDTSTAMP}\r\n` +
+        `DTSTART:${testDTSTART}\r\n` +
+        `DTEND:${testDTEND}\r\n` +
+        "SUMMARY:Meeting\r\n" +
+        "ORGANIZER:mailto:org@example.com\r\n" +
+        "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:att@example.com\r\n" +
+        "END:VEVENT\r\nEND:VCALENDAR\r\n";
+      await s.doAs("att-3223", "attpass", "PUT", attPath, calContentType(), attInitial);
+
       const attReplyICS =
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalStakk//ConformanceTest//EN\r\n" +
         "BEGIN:VEVENT\r\n" +
@@ -802,7 +832,7 @@ Deno.test(
         "ORGANIZER:mailto:org@example.com\r\n" +
         "ATTENDEE;PARTSTAT=ACCEPTED:mailto:att@example.com\r\n" +
         "END:VEVENT\r\nEND:VCALENDAR\r\n";
-      await s.do("PUT", orgPath, calContentType(), attReplyICS);
+      await s.doAs("att-3223", "attpass", "PUT", attPath, calContentType(), attReplyICS);
 
       // Re-fetch organizer's copy — ORGANIZER property must have SCHEDULE-STATUS
       const getResp = await s.do("GET", orgPath);
@@ -1339,21 +1369,8 @@ Deno.test(
   "RFC 6638 §4.1 Organizer PUT causes iTIP REQUEST scheduling message to appear in attendee inbox",
   async () => {
     await withServer(async (s) => {
-      const pfResp = await s.do(
-        "PROPFIND",
-        principalPath,
-        withHeaders({ Depth: "0" }, xmlContentType()),
-        propfindProps(nsCalDAV, "schedule-inbox-URL"),
-      );
-      assertEquals(pfResp.status, 207);
-      assertEquals(
-        parseMultistatus(pfResp.body).response(principalPath)?.propStatus("schedule-inbox-URL"),
-        200,
-        "schedule-inbox-URL must be present (200) on principal",
-      );
-      const inboxURL =
-        parseMultistatus(pfResp.body).response(principalPath)?.prop("schedule-inbox-URL")?.text() ?? "";
-      assertEquals(inboxURL !== "", true, "schedule-inbox-URL must contain a non-empty href");
+      // Create attendee user so REQUEST can be delivered to their inbox
+      await s.createUser("att-41", "att@example.com", "attpass");
 
       await s.mkcol("itip-request-col");
       const uid = "itip-request-001";
@@ -1369,15 +1386,16 @@ Deno.test(
         "END:VEVENT\r\nEND:VCALENDAR\r\n";
       await s.do("PUT", objectPath("itip-request-col", uid), calContentType(), ics);
 
-      // After PUT, a REQUEST iTIP must appear in the attendee's scheduling inbox
-      const inboxResp = await s.do(
+      // After PUT, a REQUEST iTIP must appear in the attendee's (att-41) scheduling inbox
+      const attInboxURL = userInboxPath("att-41");
+      const inboxResp = await s.doAs(
+        "att-41", "attpass",
         "PROPFIND",
-        inboxURL,
+        attInboxURL,
         withHeaders({ Depth: "1" }, xmlContentType()),
         propfindAllprop(),
       );
       assertEquals(inboxResp.status, 207, "inbox PROPFIND must return 207");
-      // Inbox must contain at least one scheduling message beyond the inbox resource itself
       assertEquals(
         parseMultistatus(inboxResp.body).len() > 1,
         true,
@@ -1393,26 +1411,16 @@ Deno.test(
   "RFC 6638 §4.2 Attendee PARTSTAT reply is reflected on Organizer copy and reply appears in Organizer inbox",
   async () => {
     await withServer(async (s) => {
-      const pfResp = await s.do(
-        "PROPFIND",
-        principalPath,
-        withHeaders({ Depth: "0" }, xmlContentType()),
-        propfindProps(nsCalDAV, "schedule-inbox-URL"),
-      );
-      assertEquals(pfResp.status, 207);
-      assertEquals(
-        parseMultistatus(pfResp.body).response(principalPath)?.propStatus("schedule-inbox-URL"),
-        200,
-        "schedule-inbox-URL must be present (200) on principal",
-      );
-      const inboxURL =
-        parseMultistatus(pfResp.body).response(principalPath)?.prop("schedule-inbox-URL")?.text() ?? "";
-      assertEquals(inboxURL !== "", true, "schedule-inbox-URL must contain a non-empty href");
-
+      // Create attendee user
+      await s.createUser("att-42", "att@example.com", "attpass");
       await s.mkcol("att-reply-flow-col");
+      await s.mkcalAs("att-42", "attpass", "att-reply-flow-col");
+
       const uid = "att-reply-flow-001";
       const orgPath = objectPath("att-reply-flow-col", uid);
+      const attPath = userObjectPath("att-42", "att-reply-flow-col", uid);
 
+      // Organizer (owner) creates event
       const orgICS =
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalStakk//ConformanceTest//EN\r\n" +
         "BEGIN:VEVENT\r\n" +
@@ -1425,10 +1433,21 @@ Deno.test(
         "END:VEVENT\r\nEND:VCALENDAR\r\n";
       await s.do("PUT", orgPath, calContentType(), orgICS);
 
-      // Attendee sends REPLY with PARTSTAT=ACCEPTED
+      // Attendee stores initial copy, then replies by changing PARTSTAT
+      const attInitial =
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalStakk//ConformanceTest//EN\r\n" +
+        "BEGIN:VEVENT\r\n" +
+        `UID:${uid}\r\n` +
+        `DTSTAMP:${testDTSTAMP}\r\n` +
+        `DTSTART:${testDTSTART}\r\n` +
+        `DTEND:${testDTEND}\r\n` +
+        "SUMMARY:Meeting\r\nORGANIZER:mailto:org@example.com\r\n" +
+        "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:att@example.com\r\n" +
+        "END:VEVENT\r\nEND:VCALENDAR\r\n";
+      await s.doAs("att-42", "attpass", "PUT", attPath, calContentType(), attInitial);
+
       const attReply =
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalStakk//ConformanceTest//EN\r\n" +
-        "METHOD:REPLY\r\n" +
         "BEGIN:VEVENT\r\n" +
         `UID:${uid}\r\n` +
         "DTSTAMP:20260102T000000Z\r\n" +
@@ -1437,7 +1456,7 @@ Deno.test(
         "SUMMARY:Meeting\r\nORGANIZER:mailto:org@example.com\r\n" +
         "ATTENDEE;PARTSTAT=ACCEPTED:mailto:att@example.com\r\n" +
         "END:VEVENT\r\nEND:VCALENDAR\r\n";
-      await s.do("PUT", orgPath, calContentType(), attReply);
+      await s.doAs("att-42", "attpass", "PUT", attPath, calContentType(), attReply);
 
       // Organizer's copy must reflect the PARTSTAT=ACCEPTED
       const getResp = await s.do("GET", orgPath);
@@ -1448,10 +1467,11 @@ Deno.test(
         "Organizer copy must reflect attendee PARTSTAT=ACCEPTED after reply",
       );
 
-      // A REPLY message must appear in the Organizer's scheduling inbox
+      // A REPLY message must appear in the Organizer's (owner) scheduling inbox
+      const orgInboxURL = userInboxPath("owner");
       const inboxResp = await s.do(
         "PROPFIND",
-        inboxURL,
+        orgInboxURL,
         withHeaders({ Depth: "1" }, xmlContentType()),
         propfindAllprop(),
       );
@@ -1541,7 +1561,7 @@ Deno.test(
         '<D:propertyupdate xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">' +
         "<D:set><D:prop>" +
         "<C:schedule-default-calendar-URL>" +
-        "<D:href>/calstakk/calendars/nonexistent-calendar-xyz</D:href>" +
+        `<D:href>${collectionPath("nonexistent-calendar-xyz")}</D:href>` +
         "</C:schedule-default-calendar-URL>" +
         "</D:prop></D:set>" +
         "</D:propertyupdate>";
@@ -1591,7 +1611,7 @@ Deno.test(
         `DTSTAMP:${testDTSTAMP}\r\n` +
         "DTSTART:20260101T000000Z\r\n" +
         "DTEND:20260201T000000Z\r\n" +
-        "ORGANIZER:mailto:organizer@example.com\r\n" +
+        `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
         "ATTENDEE:mailto:user@example.com\r\n" +
         "END:VFREEBUSY\r\nEND:VCALENDAR\r\n";
 
@@ -1745,7 +1765,7 @@ Deno.test(
         `DTSTAMP:${testDTSTAMP}\r\n` +
         "DTSTART:20260101T000000Z\r\n" +
         "DTEND:20260201T000000Z\r\n" +
-        "ORGANIZER:mailto:organizer@example.com\r\n" +
+        `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
         "ATTENDEE:mailto:nobody-at-nonexistent-domain-xyz.example\r\n" +
         "END:VFREEBUSY\r\nEND:VCALENDAR\r\n";
 
@@ -1992,9 +2012,11 @@ Deno.test(
         "<C:schedule-calendar-transp><C:transparent/></C:schedule-calendar-transp>" +
         "</D:prop></D:set>" +
         "</D:propertyupdate>";
+      const transpColPath = collectionPath("transp-transparent-col");
+      const opaqueColPath = collectionPath("transp-opaque-col");
       const proppatchResp = await s.do(
         "PROPPATCH",
-        "/calstakk/calendars/transp-transparent-col",
+        transpColPath,
         xmlContentType(),
         setTransparent,
       );
@@ -2003,26 +2025,26 @@ Deno.test(
       // Verify the transparent value was persisted
       const pfTransp = await s.do(
         "PROPFIND",
-        "/calstakk/calendars/transp-transparent-col",
+        transpColPath,
         withHeaders({ Depth: "0" }, xmlContentType()),
         propfindProps(nsCalDAV, "schedule-calendar-transp"),
       );
       assertEquals(pfTransp.status, 207);
       const transpProp = parseMultistatus(pfTransp.body)
-        .response("/calstakk/calendars/transp-transparent-col")
+        .response(transpColPath)
         ?.prop("schedule-calendar-transp");
       assertEquals(transpProp?.hasChild("transparent"), true, "schedule-calendar-transp must be set to transparent");
 
       // Verify opaque collection retains the opaque default
       const pfOpaque = await s.do(
         "PROPFIND",
-        "/calstakk/calendars/transp-opaque-col",
+        opaqueColPath,
         withHeaders({ Depth: "0" }, xmlContentType()),
         propfindProps(nsCalDAV, "schedule-calendar-transp"),
       );
       assertEquals(pfOpaque.status, 207);
       const opaqueProp = parseMultistatus(pfOpaque.body)
-        .response("/calstakk/calendars/transp-opaque-col")
+        .response(opaqueColPath)
         ?.prop("schedule-calendar-transp");
       assertEquals(opaqueProp?.hasChild("opaque"), true, "default schedule-calendar-transp must be opaque");
     });

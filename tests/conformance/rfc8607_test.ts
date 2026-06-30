@@ -8,6 +8,7 @@
 
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import {
+  calendarHomePath,
   collectionPath,
   nsCalDAV,
   objectPath,
@@ -206,7 +207,7 @@ Deno.test("RFC 8607 §4 managed attachment must be accessible at Location URI", 
 
 Deno.test("RFC 8607 §3.2 OPTIONS on calendar home must advertise calendar-managed-attachments in DAV header", async () => {
   await withServer(async (s) => {
-    const resp = await s.do("OPTIONS", "/calstakk/calendars");
+    const resp = await s.do("OPTIONS", calendarHomePath);
     assertEquals(resp.status < 500, true, "OPTIONS must not return 5xx");
     const dav = resp.headers.get("DAV") ?? "";
     assertStringIncludes(
@@ -222,7 +223,7 @@ Deno.test("RFC 8607 §3.2 OPTIONS must include calendar-managed-attachments-no-r
     await s.mkcol("norec-opt-col");
     await s.putEvent("norec-opt-col", "norec-opt-evt", "RRULE:FREQ=DAILY;COUNT=3");
 
-    const optResp = await s.do("OPTIONS", "/calstakk/calendars");
+    const optResp = await s.do("OPTIONS", calendarHomePath);
     const dav = optResp.headers.get("DAV") ?? "";
 
     // Probe whether the server accepts a per-instance attachment-add
@@ -1121,13 +1122,13 @@ Deno.test("RFC 8607 §6.1 PROPFIND on calendar home must return managed-attachme
   await withServer(async (s) => {
     const resp = await s.do(
       "PROPFIND",
-      "/calstakk/calendars",
+      calendarHomePath,
       withHeaders({ Depth: "0" }, xmlContentType()),
       propfindProps(nsCalDAV, "managed-attachments-server-URL"),
     );
     assertEquals(resp.status, 207);
     const ms = parseMultistatus(resp.body);
-    const prop = ms.response("/calstakk/calendars")?.prop("managed-attachments-server-URL");
+    const prop = ms.response(calendarHomePath)?.prop("managed-attachments-server-URL");
     // Property MAY be defined; when present and 200 with a href, validate the URI
     if (prop && prop.status === 200 && prop.text() !== "") {
       const href = prop.text().trim();
@@ -1160,7 +1161,7 @@ Deno.test("RFC 8607 §6.1 PROPPATCH to set managed-attachments-server-URL must b
 
     const resp = await s.do(
       "PROPPATCH",
-      "/calstakk/calendars",
+      calendarHomePath,
       xmlContentType(),
       body,
     );
@@ -1186,7 +1187,7 @@ Deno.test("RFC 8607 §6.1 PROPFIND allprop must not include managed-attachments-
 
     const resp = await s.do(
       "PROPFIND",
-      "/calstakk/calendars",
+      calendarHomePath,
       withHeaders({ Depth: "0" }, xmlContentType()),
       allpropBody,
     );

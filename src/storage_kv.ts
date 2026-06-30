@@ -1,21 +1,16 @@
 // Deno KV–backed storage implementation.
 //
 // Key schema:
-//   ["cal", calName]                  → CalMeta
-//   ["obj", calName, uid]             → StoredObj
-//   ["ical", calName, icalUID]        → uid  (reverse index: ical UID → path uid)
-//   ["log", calName, token: number]   → LogEntry
-//
-// Sync tokens are the stringified integer syncCounter stored in CalMeta.
-// Atomic transactions (optimistic retry) ensure counter increments and
-// object/log writes are consistent.
-//
-// Open with:
-//   const kv = await Deno.openKv();           // dev: local SQLite
-//   const kv = await Deno.openKv(path);       // explicit path
-//   // On Deno Deploy, Deno.openKv() connects to the cloud KV automatically.
+//   ["user", username]                          → User
+//   ["uemail", emailLower]                      → username  (email → username index)
+//   ["cal", username, calName]                  → CalMeta
+//   ["obj", username, calName, uid]             → StoredObj
+//   ["ical", username, calName, icalUID]        → uid
+//   ["log", username, calName, token: number]   → LogEntry
+//   ["inbox", username, uid]                    → StoredInboxItem
 
-import type { Calendar, CalendarObject, Storage, SyncChange, SyncResult } from "./storage.ts";
+import type { User } from "./types.ts";
+import type { Calendar, CalendarObject, InboxItem, Storage, SyncChange, SyncResult } from "./storage.ts";
 import { computeETag } from "./storage.ts";
 
 // ─── Stored shapes ────────────────────────────────────────────────────────────
@@ -29,12 +24,21 @@ interface CalMeta {
 interface StoredObj {
   uid: string;
   icalUID: string;
-  href: string; // full URL path, stored for efficiency
+  href: string;
   etag: string;
   ics: string;
   lastModified: string; // ISO 8601
   contentLength: number;
-  deadProps?: Record<string, string>; // "ns\x00local" → raw XML element
+  deadProps?: Record<string, string>;
+}
+
+interface StoredInboxItem {
+  uid: string;
+  ics: string;
+  href: string;
+  etag: string;
+  lastModified: string;
+  contentLength: number;
 }
 
 interface LogEntry {
@@ -44,25 +48,15 @@ interface LogEntry {
 
 // ─── Key helpers ──────────────────────────────────────────────────────────────
 
-function calKey(name: string): Deno.KvKey {
-  return ["cal", name];
-}
+function userKey(username: string): Deno.KvKey { return ["user", username]; }
+function uemailKey(email: string): Deno.KvKey { return ["uemail", email.toLowerCase()]; }
+function calKey(username: string, name: string): Deno.KvKey { return ["cal", username, name]; }
+function objKey(username: string, calName: string, uid: string): Deno.KvKey { return ["obj", username, calName, uid]; }
+function icalKey(username: string, calName: string, icalUID: string): Deno.KvKey { return ["ical", username, calName, icalUID]; }
+function logKey(username: string, calName: string, token: number): Deno.KvKey { return ["log", username, calName, token]; }
+function inboxKey(username: string, uid: string): Deno.KvKey { return ["inbox", username, uid]; }
 
-function objKey(calName: string, uid: string): Deno.KvKey {
-  return ["obj", calName, uid];
-}
-
-function icalKey(calName: string, icalUID: string): Deno.KvKey {
-  return ["ical", calName, icalUID];
-}
-
-function logKey(calName: string, token: number): Deno.KvKey {
-  return ["log", calName, token];
-}
-
-function tokenStr(n: number): string {
-  return String(n);
-}
+function tokenStr(n: number): string { return String(n); }
 
 function toCalObj(s: StoredObj): CalendarObject {
   return {
@@ -77,60 +71,126 @@ function toCalObj(s: StoredObj): CalendarObject {
   };
 }
 
+function toInboxItem(s: StoredInboxItem): InboxItem {
+  return {
+    uid: s.uid,
+    ics: s.ics,
+    href: s.href,
+    etag: s.etag,
+    lastModified: new Date(s.lastModified),
+    contentLength: s.contentLength,
+  };
+}
+
 // ─── KVStorage ────────────────────────────────────────────────────────────────
 
 export class KVStorage implements Storage {
   constructor(private readonly kv: Deno.Kv) {}
 
-  // ── Calendars ──────────────────────────────────────────────────────────────
+  // ── User management ────────────────────────────────────────────────────────
 
-  async listCalendars(): Promise<Calendar[]> {
-    const results: Calendar[] = [];
-    for await (const entry of this.kv.list<CalMeta>({ prefix: ["cal"] })) {
-      const name = entry.key[1] as string;
-      results.push(calFromMeta(name, entry.value));
+  async getUser(username: string): Promise<User | null> {
+    const entry = await this.kv.get<User>(userKey(username));
+    return entry.value ?? null;
+  }
+
+  async getUserByEmail(email: string): Promise<User | null> {
+    const idx = await this.kv.get<string>(uemailKey(email));
+    if (!idx.value) return null;
+    return this.getUser(idx.value);
+  }
+
+  async listUsers(): Promise<User[]> {
+    const results: User[] = [];
+    for await (const entry of this.kv.list<User>({ prefix: ["user"] })) {
+      results.push(entry.value);
     }
     return results;
   }
 
-  async getCalendar(name: string): Promise<Calendar | null> {
-    const entry = await this.kv.get<CalMeta>(calKey(name));
-    if (!entry.value) return null;
-    return calFromMeta(name, entry.value);
+  async createUser(user: User): Promise<void> {
+    const key = userKey(user.username);
+    const existing = await this.kv.get(key);
+    if (existing.value !== null) throw new Error(`User ${user.username} already exists`);
+    const txn = this.kv.atomic().check(existing).set(key, user);
+    if (user.email) txn.set(uemailKey(user.email), user.username);
+    const res = await txn.commit();
+    if (!res.ok) throw new Error(`User ${user.username} already exists`);
   }
 
-  async createCalendar(name: string, displayName: string): Promise<void> {
-    const key = calKey(name);
+  async updateUser(
+    username: string,
+    updates: Partial<Pick<User, "passwordHash" | "displayName" | "email" | "timezone" | "isAdmin">>,
+  ): Promise<void> {
+    const key = userKey(username);
+    while (true) {
+      const entry = await this.kv.get<User>(key);
+      if (!entry.value) throw new Error(`User ${username} not found`);
+      const oldEmail = entry.value.email;
+      const updated = { ...entry.value, ...updates };
+      const txn = this.kv.atomic().check(entry).set(key, updated);
+      if (updates.email && updates.email !== oldEmail) {
+        if (oldEmail) txn.delete(uemailKey(oldEmail));
+        txn.set(uemailKey(updates.email), username);
+      }
+      const res = await txn.commit();
+      if (res.ok) return;
+    }
+  }
+
+  async deleteUser(username: string): Promise<void> {
+    const entry = await this.kv.get<User>(userKey(username));
+    if (!entry.value) throw new Error(`User ${username} not found`);
+    const email = entry.value.email;
+    // Delete all user data
+    for await (const e of this.kv.list({ prefix: ["cal", username] })) await this.kv.delete(e.key);
+    for await (const e of this.kv.list({ prefix: ["obj", username] })) await this.kv.delete(e.key);
+    for await (const e of this.kv.list({ prefix: ["ical", username] })) await this.kv.delete(e.key);
+    for await (const e of this.kv.list({ prefix: ["log", username] })) await this.kv.delete(e.key);
+    for await (const e of this.kv.list({ prefix: ["inbox", username] })) await this.kv.delete(e.key);
+    if (email) await this.kv.delete(uemailKey(email));
+    await this.kv.delete(userKey(username));
+  }
+
+  // ── Calendars ──────────────────────────────────────────────────────────────
+
+  async listCalendars(username: string): Promise<Calendar[]> {
+    const results: Calendar[] = [];
+    for await (const entry of this.kv.list<CalMeta>({ prefix: ["cal", username] })) {
+      const name = entry.key[2] as string;
+      results.push(calFromMeta(username, name, entry.value));
+    }
+    return results;
+  }
+
+  async getCalendar(username: string, name: string): Promise<Calendar | null> {
+    const entry = await this.kv.get<CalMeta>(calKey(username, name));
+    if (!entry.value) return null;
+    return calFromMeta(username, name, entry.value);
+  }
+
+  async createCalendar(username: string, name: string, displayName: string): Promise<void> {
+    const key = calKey(username, name);
     const existing = await this.kv.get(key);
     if (existing.value !== null) throw new Error(`Calendar ${name} already exists`);
-
     const meta: CalMeta = { displayName: displayName || name, customProps: {}, syncCounter: 0 };
     const res = await this.kv.atomic().check(existing).set(key, meta).commit();
     if (!res.ok) throw new Error(`Calendar ${name} already exists`);
   }
 
-  async deleteCalendar(name: string): Promise<void> {
-    // Sequential deletes — no atomicity needed for a destructive collection drop.
-    // Deno KV atomic transactions cap at ~1000 mutations, so batching is required
-    // for large collections; simple sequential deletes are safer here.
-    for await (const entry of this.kv.list({ prefix: ["obj", name] })) {
-      await this.kv.delete(entry.key);
-    }
-    for await (const entry of this.kv.list({ prefix: ["ical", name] })) {
-      await this.kv.delete(entry.key);
-    }
-    for await (const entry of this.kv.list({ prefix: ["log", name] })) {
-      await this.kv.delete(entry.key);
-    }
-    await this.kv.delete(calKey(name));
+  async deleteCalendar(username: string, name: string): Promise<void> {
+    for await (const entry of this.kv.list({ prefix: ["obj", username, name] })) await this.kv.delete(entry.key);
+    for await (const entry of this.kv.list({ prefix: ["ical", username, name] })) await this.kv.delete(entry.key);
+    for await (const entry of this.kv.list({ prefix: ["log", username, name] })) await this.kv.delete(entry.key);
+    await this.kv.delete(calKey(username, name));
   }
 
-  async updateCalendarDisplayName(name: string, displayName: string): Promise<void> {
-    await this._patchMeta(name, (m) => ({ ...m, displayName }));
+  async updateCalendarDisplayName(username: string, name: string, displayName: string): Promise<void> {
+    await this._patchMeta(username, name, (m) => ({ ...m, displayName }));
   }
 
-  async updateCalendarProp(name: string, key: string, value: string): Promise<void> {
-    await this._patchMeta(name, (m) => ({
+  async updateCalendarProp(username: string, name: string, key: string, value: string): Promise<void> {
+    await this._patchMeta(username, name, (m) => ({
       ...m,
       customProps: { ...m.customProps, [key]: value },
     }));
@@ -138,35 +198,36 @@ export class KVStorage implements Storage {
 
   // ── Objects ────────────────────────────────────────────────────────────────
 
-  async listObjects(calendarName: string): Promise<CalendarObject[]> {
+  async listObjects(username: string, calendarName: string): Promise<CalendarObject[]> {
     const results: CalendarObject[] = [];
-    for await (const entry of this.kv.list<StoredObj>({ prefix: ["obj", calendarName] })) {
+    for await (const entry of this.kv.list<StoredObj>({ prefix: ["obj", username, calendarName] })) {
       results.push(toCalObj(entry.value));
     }
     return results;
   }
 
-  async getObject(calendarName: string, uid: string): Promise<CalendarObject | null> {
-    const entry = await this.kv.get<StoredObj>(objKey(calendarName, uid));
+  async getObject(username: string, calendarName: string, uid: string): Promise<CalendarObject | null> {
+    const entry = await this.kv.get<StoredObj>(objKey(username, calendarName, uid));
     if (!entry.value) return null;
     return toCalObj(entry.value);
   }
 
-  async findObjectByICalUID(calendarName: string, icalUID: string): Promise<string | null> {
-    const entry = await this.kv.get<string>(icalKey(calendarName, icalUID));
+  async findObjectByICalUID(username: string, calendarName: string, icalUID: string): Promise<string | null> {
+    const entry = await this.kv.get<string>(icalKey(username, calendarName, icalUID));
     return entry.value ?? null;
   }
 
-  async findObjectByICalUIDGlobal(icalUID: string): Promise<{ calendarName: string; uid: string } | null> {
-    const cals = await this.listCalendars();
+  async findObjectByICalUIDGlobal(username: string, icalUID: string): Promise<{ calendarName: string; uid: string } | null> {
+    const cals = await this.listCalendars(username);
     for (const cal of cals) {
-      const uid = await this.findObjectByICalUID(cal.name, icalUID);
+      const uid = await this.findObjectByICalUID(username, cal.name, icalUID);
       if (uid) return { calendarName: cal.name, uid };
     }
     return null;
   }
 
   async putObject(
+    username: string,
     calendarName: string,
     uid: string,
     ics: string,
@@ -174,7 +235,7 @@ export class KVStorage implements Storage {
   ): Promise<CalendarObject> {
     const etag = await computeETag(ics);
     const now = new Date();
-    const href = `/calstakk/calendars/${calendarName}/${uid}.ics`;
+    const href = `/calendars/${username}/${calendarName}/${uid}.ics`;
     const stored: StoredObj = {
       uid,
       icalUID,
@@ -185,10 +246,9 @@ export class KVStorage implements Storage {
       contentLength: new TextEncoder().encode(ics).length,
     };
 
-    const cKey = calKey(calendarName);
-    const oKey = objKey(calendarName, uid);
+    const cKey = calKey(username, calendarName);
+    const oKey = objKey(username, calendarName, uid);
 
-    // Optimistic retry loop: read-then-atomically-write.
     while (true) {
       const [metaEntry, objEntry] = await this.kv.getMany<[CalMeta, StoredObj]>([cKey, oKey]);
       if (!metaEntry.value) throw new Error(`Calendar ${calendarName} not found`);
@@ -202,25 +262,24 @@ export class KVStorage implements Storage {
         .check(objEntry)
         .set(cKey, { ...metaEntry.value, syncCounter: newCounter })
         .set(oKey, stored)
-        .set(icalKey(calendarName, icalUID), uid)
-        .set(logKey(calendarName, newCounter), {
+        .set(icalKey(username, calendarName, icalUID), uid)
+        .set(logKey(username, calendarName, newCounter), {
           uid,
           type: isNew ? "added" : "modified",
         } satisfies LogEntry);
 
       if (oldIcalUID && oldIcalUID !== icalUID) {
-        txn.delete(icalKey(calendarName, oldIcalUID));
+        txn.delete(icalKey(username, calendarName, oldIcalUID));
       }
 
       const res = await txn.commit();
       if (res.ok) return toCalObj(stored);
-      // Another writer raced us — retry.
     }
   }
 
-  async deleteObject(calendarName: string, uid: string): Promise<void> {
-    const cKey = calKey(calendarName);
-    const oKey = objKey(calendarName, uid);
+  async deleteObject(username: string, calendarName: string, uid: string): Promise<void> {
+    const cKey = calKey(username, calendarName);
+    const oKey = objKey(username, calendarName, uid);
 
     while (true) {
       const [metaEntry, objEntry] = await this.kv.getMany<[CalMeta, StoredObj]>([cKey, oKey]);
@@ -235,16 +294,16 @@ export class KVStorage implements Storage {
         .check(objEntry)
         .set(cKey, { ...metaEntry.value, syncCounter: newCounter })
         .delete(oKey)
-        .delete(icalKey(calendarName, icalUID))
-        .set(logKey(calendarName, newCounter), { uid, type: "deleted" } satisfies LogEntry)
+        .delete(icalKey(username, calendarName, icalUID))
+        .set(logKey(username, calendarName, newCounter), { uid, type: "deleted" } satisfies LogEntry)
         .commit();
 
       if (res.ok) return;
     }
   }
 
-  async updateObjectProp(calendarName: string, uid: string, key: string, rawXml: string): Promise<void> {
-    const oKey = objKey(calendarName, uid);
+  async updateObjectProp(username: string, calendarName: string, uid: string, key: string, rawXml: string): Promise<void> {
+    const oKey = objKey(username, calendarName, uid);
     while (true) {
       const entry = await this.kv.get<StoredObj>(oKey);
       if (!entry.value) throw new Error(`Object ${uid} not found`);
@@ -257,70 +316,94 @@ export class KVStorage implements Storage {
     }
   }
 
-  async copyObject(srcCalName: string, srcUid: string, dstCalName: string, dstUid: string): Promise<CalendarObject> {
-    const srcEntry = await this.kv.get<StoredObj>(objKey(srcCalName, srcUid));
+  async copyObject(username: string, srcCalName: string, srcUid: string, dstCalName: string, dstUid: string): Promise<CalendarObject> {
+    const srcEntry = await this.kv.get<StoredObj>(objKey(username, srcCalName, srcUid));
     if (!srcEntry.value) throw new Error(`Source object ${srcUid} not found`);
     const src = srcEntry.value;
-    const dst = await this.putObject(dstCalName, dstUid, src.ics, src.icalUID);
-    // Copy dead props if any
+    const dst = await this.putObject(username, dstCalName, dstUid, src.ics, src.icalUID);
     if (src.deadProps && Object.keys(src.deadProps).length > 0) {
       for (const [k, v] of Object.entries(src.deadProps)) {
-        await this.updateObjectProp(dstCalName, dstUid, k, v);
+        await this.updateObjectProp(username, dstCalName, dstUid, k, v);
       }
     }
     return dst;
   }
 
-  async moveObject(srcCalName: string, srcUid: string, dstCalName: string, dstUid: string): Promise<CalendarObject> {
-    const dst = await this.copyObject(srcCalName, srcUid, dstCalName, dstUid);
-    await this.deleteObject(srcCalName, srcUid);
+  async moveObject(username: string, srcCalName: string, srcUid: string, dstCalName: string, dstUid: string): Promise<CalendarObject> {
+    const dst = await this.copyObject(username, srcCalName, srcUid, dstCalName, dstUid);
+    await this.deleteObject(username, srcCalName, srcUid);
     return dst;
   }
 
   // ── Sync ───────────────────────────────────────────────────────────────────
 
-  async getSyncToken(calendarName: string): Promise<string> {
-    const entry = await this.kv.get<CalMeta>(calKey(calendarName));
+  async getSyncToken(username: string, calendarName: string): Promise<string> {
+    const entry = await this.kv.get<CalMeta>(calKey(username, calendarName));
     return tokenStr(entry.value?.syncCounter ?? 0);
   }
 
-  async getChanges(calendarName: string, sinceToken: string): Promise<SyncResult> {
-    const metaEntry = await this.kv.get<CalMeta>(calKey(calendarName));
+  async getChanges(username: string, calendarName: string, sinceToken: string): Promise<SyncResult> {
+    const metaEntry = await this.kv.get<CalMeta>(calKey(username, calendarName));
     if (!metaEntry.value) return { changes: [], newToken: "0" };
 
     const newToken = tokenStr(metaEntry.value.syncCounter);
 
     if (sinceToken === "") {
-      return { changes: await this._allObjectsAsAdded(calendarName), newToken };
+      return { changes: await this._allObjectsAsAdded(username, calendarName), newToken };
     }
 
     const since = parseInt(sinceToken, 10);
-    if (isNaN(since)) {
-      return { changes: [], newToken, invalidToken: true };
-    }
+    if (isNaN(since)) return { changes: [], newToken, invalidToken: true };
+    if (since === 0) return { changes: await this._allObjectsAsAdded(username, calendarName), newToken };
 
-    if (since === 0) {
-      return { changes: await this._allObjectsAsAdded(calendarName), newToken };
-    }
-
-    // Incremental: scan the log and collect entries with token > since.
     const raw: LogEntry[] = [];
-    for await (const entry of this.kv.list<LogEntry>({ prefix: ["log", calendarName] })) {
-      const token = entry.key[2] as number;
+    for await (const entry of this.kv.list<LogEntry>({ prefix: ["log", username, calendarName] })) {
+      const token = entry.key[3] as number;
       if (token > since) raw.push(entry.value);
     }
 
-    // Deduplicate: keep only the latest change per uid (log is ordered by token asc).
     const seen = new Map<string, SyncChange>();
     for (const ch of raw) seen.set(ch.uid, ch);
 
     return { changes: Array.from(seen.values()), newToken };
   }
 
+  // ── Scheduling inbox ───────────────────────────────────────────────────────
+
+  async listInboxItems(username: string): Promise<InboxItem[]> {
+    const results: InboxItem[] = [];
+    for await (const entry of this.kv.list<StoredInboxItem>({ prefix: ["inbox", username] })) {
+      results.push(toInboxItem(entry.value));
+    }
+    return results;
+  }
+
+  async putInboxItem(username: string, uid: string, ics: string): Promise<InboxItem> {
+    const etag = await computeETag(ics);
+    const now = new Date();
+    const stored: StoredInboxItem = {
+      uid,
+      ics,
+      href: `/calendars/${username}/inbox/${uid}.ics`,
+      etag,
+      lastModified: now.toISOString(),
+      contentLength: new TextEncoder().encode(ics).length,
+    };
+    await this.kv.set(inboxKey(username, uid), stored);
+    return toInboxItem(stored);
+  }
+
+  async deleteInboxItem(username: string, uid: string): Promise<void> {
+    const key = inboxKey(username, uid);
+    const entry = await this.kv.get(key);
+    if (!entry.value) throw new Error(`Inbox item ${uid} not found`);
+    await this.kv.delete(key);
+  }
+
   // ── Private helpers ────────────────────────────────────────────────────────
 
-  private async _patchMeta(name: string, fn: (m: CalMeta) => CalMeta): Promise<void> {
-    const key = calKey(name);
+  private async _patchMeta(username: string, name: string, fn: (m: CalMeta) => CalMeta): Promise<void> {
+    const key = calKey(username, name);
     while (true) {
       const entry = await this.kv.get<CalMeta>(key);
       if (!entry.value) throw new Error(`Calendar ${name} not found`);
@@ -329,9 +412,9 @@ export class KVStorage implements Storage {
     }
   }
 
-  private async _allObjectsAsAdded(calendarName: string): Promise<SyncChange[]> {
+  private async _allObjectsAsAdded(username: string, calendarName: string): Promise<SyncChange[]> {
     const changes: SyncChange[] = [];
-    for await (const entry of this.kv.list<StoredObj>({ prefix: ["obj", calendarName] })) {
+    for await (const entry of this.kv.list<StoredObj>({ prefix: ["obj", username, calendarName] })) {
       changes.push({ uid: entry.value.uid, type: "added" });
     }
     return changes;
@@ -340,11 +423,11 @@ export class KVStorage implements Storage {
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
-function calFromMeta(name: string, meta: CalMeta): Calendar {
+function calFromMeta(username: string, name: string, meta: CalMeta): Calendar {
   return {
     name,
     displayName: meta.displayName,
     customProps: meta.customProps,
-    href: `/calstakk/calendars/${name}`,
+    href: `/calendars/${username}/${name}`,
   };
 }

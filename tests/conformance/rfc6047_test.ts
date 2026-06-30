@@ -9,6 +9,7 @@
 import { assertEquals } from "@std/assert";
 import {
   nsCalDAV,
+  OWNER_EMAIL,
   parseMultistatus,
   principalPath,
   propfindProps,
@@ -54,7 +55,7 @@ Deno.test("RFC 6047 §2 POST with text/calendar; method=REQUEST accepted by outb
       `DTSTART:${testDTSTART}\r\n` +
       `DTEND:${testDTEND}\r\n` +
       "SUMMARY:iMIP Test Meeting\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:attendee@example.com\r\n" +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
@@ -92,7 +93,7 @@ Deno.test("RFC 6047 §2 POST with mismatched method parameter must be rejected",
       `DTSTART:${testDTSTART}\r\n` +
       `DTEND:${testDTEND}\r\n` +
       "SUMMARY:Mismatch Test\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
     const resp = await s.do(
@@ -148,7 +149,7 @@ Deno.test("RFC 6047 §3 CANCEL POST to outbox must not cause 5xx", async () => {
     await s.putEvent(
       "imip-cancel-col",
       origUID,
-      "ORGANIZER:mailto:organizer@example.com",
+      `ORGANIZER:mailto:${OWNER_EMAIL}`,
       "ATTENDEE;PARTSTAT=ACCEPTED:mailto:attendee@example.com",
     );
 
@@ -168,7 +169,7 @@ Deno.test("RFC 6047 §3 CANCEL POST to outbox must not cause 5xx", async () => {
       `UID:${origUID}\r\n` +
       `DTSTAMP:${testDTSTAMP}\r\n` +
       `DTSTART:${testDTSTART}\r\n` +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE:mailto:attendee@example.com\r\n" +
       "SEQUENCE:1\r\n" +
       "STATUS:CANCELLED\r\n" +
@@ -269,7 +270,7 @@ Deno.test("RFC 6047 §2.3 ATTENDEE with non-mailto URI must be rejected", async 
       `DTSTART:${testDTSTART}\r\n` +
       `DTEND:${testDTEND}\r\n` +
       "SUMMARY:Non-mailto ATTENDEE\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE;PARTSTAT=NEEDS-ACTION:ldap://example.com:6666/o=attendee\r\n" +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
@@ -307,7 +308,7 @@ Deno.test("RFC 6047 §2.3 VTODO REQUEST with mailto ORGANIZER and ATTENDEE accep
       `DTSTAMP:${testDTSTAMP}\r\n` +
       `DUE:${testDTSTART}\r\n` +
       "SUMMARY:iMIP VTODO Test\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:attendee@example.com\r\n" +
       "END:VTODO\r\nEND:VCALENDAR\r\n";
 
@@ -394,7 +395,7 @@ Deno.test("RFC 6047 §2.4 method parameter matching is case-insensitive", async 
       `DTSTART:${testDTSTART}\r\n` +
       `DTEND:${testDTEND}\r\n` +
       "SUMMARY:Case-insensitive Method\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:attendee@example.com\r\n" +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
@@ -434,7 +435,7 @@ Deno.test("RFC 6047 §2.4 charset=UTF-8 required when iCalendar body contains no
       `DTSTART:${testDTSTART}\r\n` +
       `DTEND:${testDTEND}\r\n` +
       "SUMMARY:Prüfung (non-ASCII ü without declared charset)\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:attendee@example.com\r\n" +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
@@ -475,7 +476,7 @@ Deno.test("RFC 6047 §2.4 outbox POST with multipart/mixed enclosing text/calend
       `DTSTART:${testDTSTART}\r\n` +
       `DTEND:${testDTEND}\r\n` +
       "SUMMARY:Multipart Mixed Test\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:attendee@example.com\r\n" +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
@@ -524,7 +525,7 @@ Deno.test("RFC 6047 §2.4 multipart/alternative with two text/calendar parts mus
       `DTSTAMP:${testDTSTAMP}\r\n` +
       "DTSTART:20260115T100000Z\r\nDTEND:20260115T110000Z\r\n" +
       "SUMMARY:Alternative Time A\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:attendee@example.com\r\n" +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
     const calPart2 =
@@ -535,7 +536,7 @@ Deno.test("RFC 6047 §2.4 multipart/alternative with two text/calendar parts mus
       `DTSTAMP:${testDTSTAMP}\r\n` +
       "DTSTART:20260115T140000Z\r\nDTEND:20260115T150000Z\r\n" +
       "SUMMARY:Alternative Time B\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:attendee@example.com\r\n" +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
@@ -587,7 +588,7 @@ Deno.test("RFC 6047 §2.4 multipart/mixed with multiple text/calendar parts havi
       `DTSTART:${testDTSTART}\r\n` +
       `DTEND:${testDTEND}\r\n` +
       "SUMMARY:Multi-method Test Request\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:attendee@example.com\r\n" +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
@@ -600,7 +601,7 @@ Deno.test("RFC 6047 §2.4 multipart/mixed with multiple text/calendar parts havi
       `DTSTAMP:${testDTSTAMP}\r\n` +
       "DTSTART:20260116T100000Z\r\nDTEND:20260116T110000Z\r\n" +
       "SUMMARY:Multi-method Test Publish\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
     const body =
@@ -660,7 +661,7 @@ Deno.test("RFC 6047 §2.6 MIME part processed by Content-Type not by Content-Dis
       `DTSTART:${testDTSTART}\r\n` +
       `DTEND:${testDTEND}\r\n` +
       "SUMMARY:Content-Disposition Extension Test\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:attendee@example.com\r\n" +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
@@ -705,7 +706,7 @@ Deno.test("RFC 6047 §2 REPLY method POST to outbox accepted with correct PARTST
       `DTSTART:${testDTSTART}\r\n` +
       `DTEND:${testDTEND}\r\n` +
       "SUMMARY:Reply Test\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE;PARTSTAT=ACCEPTED:mailto:attendee@example.com\r\n" +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
@@ -744,7 +745,7 @@ Deno.test("RFC 6047 §2 PUBLISH method POST to outbox accepted", async () => {
       `DTSTART:${testDTSTART}\r\n` +
       `DTEND:${testDTEND}\r\n` +
       "SUMMARY:Published Event\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
 
     const resp = await s.do(
@@ -768,7 +769,7 @@ Deno.test("RFC 6047 §2 valid CANCEL POST to outbox returns 2xx or 207 with per-
     await s.putEvent(
       "imip-cancel-affirm-col",
       origUID,
-      "ORGANIZER:mailto:organizer@example.com",
+      `ORGANIZER:mailto:${OWNER_EMAIL}`,
       "ATTENDEE;PARTSTAT=ACCEPTED:mailto:attendee@example.com",
     );
 
@@ -788,7 +789,7 @@ Deno.test("RFC 6047 §2 valid CANCEL POST to outbox returns 2xx or 207 with per-
       `UID:${origUID}\r\n` +
       `DTSTAMP:${testDTSTAMP}\r\n` +
       `DTSTART:${testDTSTART}\r\n` +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE:mailto:attendee@example.com\r\n" +
       "SEQUENCE:1\r\n" +
       "STATUS:CANCELLED\r\n" +
@@ -829,7 +830,7 @@ Deno.test("RFC 6047 §2 REQUEST returning 207 includes cal:schedule-response wit
       `DTSTART:${testDTSTART}\r\n` +
       `DTEND:${testDTEND}\r\n` +
       "SUMMARY:207 Schedule Response Test\r\n" +
-      "ORGANIZER:mailto:organizer@example.com\r\n" +
+      `ORGANIZER:mailto:${OWNER_EMAIL}\r\n` +
       "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:attendee@example.com\r\n" +
       "END:VEVENT\r\nEND:VCALENDAR\r\n";
 

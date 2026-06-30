@@ -23,6 +23,7 @@ export const HTTP_STATUS: Record<number, string> = {
   307: "Temporary Redirect",
   308: "Permanent Redirect",
   400: "Bad Request",
+  401: "Unauthorized",
   403: "Forbidden",
   404: "Not Found",
   405: "Method Not Allowed",
@@ -46,52 +47,103 @@ export function parseDepth(header: string | null): Depth {
   return "1"; // default
 }
 
-export const PRINCIPAL_PATH = "/calstakk";
-export const CALENDAR_HOME_PATH = "/calstakk/calendars";
-export const INBOX_PATH = "/calstakk/inbox/";
-export const OUTBOX_PATH = "/calstakk/outbox/";
+// ─── User ─────────────────────────────────────────────────────────────────────
+
+export interface User {
+  username: string;
+  /** bcrypt hash of the password. */
+  passwordHash: string;
+  displayName: string;
+  /** Primary email — used for calendar-user-address-set and scheduling. */
+  email: string;
+  /** IANA timezone identifier. */
+  timezone: string;
+  /** Owner/admin flag — only one user has this set. */
+  isAdmin: boolean;
+}
+
+// ─── Path helpers (per-user) ──────────────────────────────────────────────────
+
 export const DEFAULT_CALENDAR_NAME = "default";
 
-export function collectionPath(name: string): string {
-  return `${CALENDAR_HOME_PATH}/${name}`;
+// Canonical sabre/dav pattern: /principals/<username> and /calendars/<username>/
+export function principalPath(username: string): string {
+  return `/principals/${username}`;
 }
 
-export function objectPath(collection: string, uid: string): string {
-  return `${CALENDAR_HOME_PATH}/${collection}/${uid}.ics`;
+export function calendarHomePath(username: string): string {
+  return `/calendars/${username}`;
 }
+
+export function inboxPath(username: string): string {
+  return `/calendars/${username}/inbox`;
+}
+
+export function outboxPath(username: string): string {
+  return `/calendars/${username}/outbox`;
+}
+
+export function collectionPath(username: string, name: string): string {
+  return `/calendars/${username}/${name}`;
+}
+
+export function objectPath(username: string, collection: string, uid: string): string {
+  return `/calendars/${username}/${collection}/${uid}.ics`;
+}
+
+// ─── Path parsing ─────────────────────────────────────────────────────────────
 
 export type ResourceType =
   | "root"
-  | "principal"
-  | "calendarHome"
-  | "inbox"
-  | "outbox"
-  | "collection"
-  | "object"
+  | "principals"      // /principals
+  | "principal"       // /principals/<username>
+  | "calendarHome"    // /calendars/<username>
+  | "inbox"           // /calendars/<username>/inbox
+  | "outbox"          // /calendars/<username>/outbox
+  | "collection"      // /calendars/<username>/<name>
+  | "object"          // /calendars/<username>/<name>/<uid>.ics
+  | "wellknown"
   | "unknown";
 
-export function resourceTypeAtPath(path: string): ResourceType {
+export interface ParsedPath {
+  type: ResourceType;
+  username: string;   // empty for root/wellknown/principals
+  collection: string; // empty unless collection/object
+  uid: string;        // empty unless object (no .ics extension)
+}
+
+export function parsePath(path: string): ParsedPath {
   const p = path.replace(/\/$/, "") || "/";
-  if (p === INBOX_PATH.replace(/\/$/, "")) return "inbox";
-  if (p === OUTBOX_PATH.replace(/\/$/, "")) return "outbox";
   const parts = p.split("/").filter(Boolean);
-  switch (parts.length) {
-    case 0: return "root";
-    case 1: return "principal"; // /calstakk
-    case 2: return "calendarHome"; // /calstakk/calendars
-    case 3: return "collection"; // /calstakk/calendars/<name>
-    case 4: return "object"; // /calstakk/calendars/<name>/<uid>.ics
-    default: return "unknown";
+
+  if (p === "/" || parts.length === 0) {
+    return { type: "root", username: "", collection: "", uid: "" };
   }
-}
 
-export function collectionNameFromPath(path: string): string {
-  const parts = path.split("/").filter(Boolean);
-  return parts[2] ?? "";
-}
+  if (p === "/.well-known/caldav") {
+    return { type: "wellknown", username: "", collection: "", uid: "" };
+  }
 
-export function objectUIDFromPath(path: string): string {
-  const parts = path.split("/").filter(Boolean);
-  const filename = parts[3] ?? "";
-  return filename.replace(/\.ics$/, "");
+  if (parts[0] === "principals") {
+    if (parts.length === 1) return { type: "principals", username: "", collection: "", uid: "" };
+    if (parts.length === 2) return { type: "principal", username: parts[1], collection: "", uid: "" };
+    return { type: "unknown", username: parts[1], collection: "", uid: "" };
+  }
+
+  if (parts[0] === "calendars") {
+    if (parts.length === 1) return { type: "root", username: "", collection: "", uid: "" };
+    const username = parts[1];
+    if (parts.length === 2) return { type: "calendarHome", username, collection: "", uid: "" };
+    const segment = parts[2];
+    if (segment === "inbox") return { type: "inbox", username, collection: "inbox", uid: "" };
+    if (segment === "outbox") return { type: "outbox", username, collection: "outbox", uid: "" };
+    if (parts.length === 3) return { type: "collection", username, collection: segment, uid: "" };
+    if (parts.length === 4) {
+      const uid = parts[3].replace(/\.ics$/, "");
+      return { type: "object", username, collection: segment, uid };
+    }
+    return { type: "unknown", username, collection: "", uid: "" };
+  }
+
+  return { type: "unknown", username: "", collection: "", uid: "" };
 }
