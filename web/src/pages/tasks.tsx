@@ -29,7 +29,7 @@ export function TasksPage() {
 
   const projects = visible.map((col, i) => {
     const color = col.color ?? collectionColor(names, col.name).bg
-    const todos: Todo[] = (todoQueries[i]?.data ?? []) as Todo[]
+    const todos: Todo[] = (todoQueries[i]?.data ?? [])
 
     const active = todos
       .filter((t) => t.status !== 'COMPLETED' && t.status !== 'CANCELLED')
@@ -70,7 +70,7 @@ export function TasksPage() {
               active={active}
               total={total}
               now={now}
-              onNavigate={() => navigate(`/${col.name}`)}
+              onNavigate={() => { void navigate(`/${col.name}`) }}
             />
           ))}
         </div>

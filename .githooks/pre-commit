@@ -9,6 +9,6 @@
 
 set -euo pipefail
 
-~/.deno/bin/deno check src/ tests/
-~/.deno/bin/deno lint
-~/.deno/bin/deno test --allow-net --allow-env tests/
+# The complete gate: backend lint + type-check + tests, then the web UI
+# (lint + typecheck + build). One command, covers both halves.
+~/.deno/bin/deno task check

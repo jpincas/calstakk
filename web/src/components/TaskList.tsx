@@ -325,7 +325,7 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
   const [optimisticActive, setOptimisticActive] = useState<Todo[] | null>(null)
   const pendingDrag = useRef(0)
   const prevTodosRef = useRef<Todo[]>([])
-  const inlineCreatedUids = useRef<string[]>([])
+  const [inlineCreatedUids, setInlineCreatedUids] = useState<string[]>([])
 
   // Clear optimistic override once fresh server data arrives
   useEffect(() => {
@@ -364,8 +364,8 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
         if (a.x_sort_order !== undefined && b.x_sort_order !== undefined) return a.x_sort_order - b.x_sort_order
         if (a.x_sort_order !== undefined) return -1
         if (b.x_sort_order !== undefined) return 1
-        const ai = inlineCreatedUids.current.indexOf(a.uid)
-        const bi = inlineCreatedUids.current.indexOf(b.uid)
+        const ai = inlineCreatedUids.indexOf(a.uid)
+        const bi = inlineCreatedUids.indexOf(b.uid)
         if (ai !== -1 && bi !== -1) return ai - bi
         if (ai !== -1) return 1
         if (bi !== -1) return -1
@@ -374,7 +374,7 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
         if (!b.due) return -1
         return a.due.localeCompare(b.due)
       }),
-    [todos],
+    [todos, inlineCreatedUids],
   )
 
   const activeTodos = optimisticActive ?? computedActive
@@ -429,7 +429,7 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
     mutationFn: (todo: Todo) => caldav.updateTodo(collection, todo),
     onSettled: () => {
       pendingDrag.current--
-      if (pendingDrag.current === 0) qc.invalidateQueries({ queryKey: ['todos', collection] })
+      if (pendingDrag.current === 0) void qc.invalidateQueries({ queryKey: ['todos', collection] })
     },
     onError: (e) => toast.error(String(e)),
   })
@@ -500,8 +500,8 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
     const sourceContainerId = dragActive.data.current.containerId as string
     const overData = over.data.current
     const targetContainerId: string =
-      overData?.type === 'task' ? overData.containerId :
-      overData?.type === 'container' ? overData.containerId :
+      overData?.type === 'task' ? (overData.containerId as string) :
+      overData?.type === 'container' ? (overData.containerId as string) :
       sourceContainerId
 
     const curActive = optimisticActive ?? computedActive
@@ -592,7 +592,7 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
     const trimmed = inlineNewValue.trim()
     if (!trimmed) { setShowInlineNew(null); setInlineNewValue(''); return }
     const uid = crypto.randomUUID()
-    inlineCreatedUids.current.push(uid)
+    setInlineCreatedUids(prev => [...prev, uid])
     const section_id = (!showInlineNew || showInlineNew === 'ungrouped') ? undefined : showInlineNew
     saveInlineNew.mutate({ uid, summary: trimmed, section_id })
     setInlineNewValue('')
@@ -665,7 +665,7 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
       tabIndex={-1}
       style={{ outline: 'none' }}
       onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node)) setPanelOpenUid(null)
+        if (!e.currentTarget.contains(e.relatedTarget)) setPanelOpenUid(null)
       }}
     >
       <SortableTodoRow {...rowProps(todo)} containerId={containerId} />
@@ -834,7 +834,7 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
                   tabIndex={-1}
                   style={{ outline: 'none' }}
                   onBlur={(e) => {
-                    if (!e.currentTarget.contains(e.relatedTarget as Node)) setPanelOpenUid(null)
+                    if (!e.currentTarget.contains(e.relatedTarget)) setPanelOpenUid(null)
                   }}
                 >
                   <TodoRow {...rowProps(t)} />

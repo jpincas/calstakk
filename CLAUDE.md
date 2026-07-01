@@ -149,22 +149,23 @@ web/src/
 
 ### Run the web UI dev server (hot reload)
 ```bash
-cd web && npm run dev              # Vite dev server on http://localhost:5173
+~/.deno/bin/deno task web-dev      # Vite dev server on http://localhost:5173
 # Note: CalDAV requests proxy to :5232 — check web/vite.config.ts for proxy config
 ```
 
-### Gates — run these before committing
-```bash
-~/.deno/bin/deno check src/ tests/        # Backend type-check
-~/.deno/bin/deno lint                     # Lint (excludes web/)
-~/.deno/bin/deno test --allow-net --allow-env tests/  # 524 conformance tests — must stay green
-cd web && npm run build                   # Web UI type-check + build
-```
+### Config / env
+Vars are read from the environment by `src/config.ts`. `deno task start|dev|seed`
+load `.env.local` then `.env` (first wins; real shell env overrides both):
+- **`.env`** — committed, non-secret defaults; the canonical list of every var.
+- **`.env.local`** — gitignored, per-machine secrets (e.g. `CALSTAKK_PASSWORD`).
 
-### After web UI changes
+### The gate — run before committing
 ```bash
-~/.deno/bin/deno task web-build    # Rebuild web/dist (served by the CalDAV server)
+~/.deno/bin/deno task check        # deno lint + type-check + 524 tests, then web lint + build
 ```
+`check` is the one complete gate — backend **and** frontend. The pre-commit hook
+runs it; don't `--no-verify` past it. Fast inner loop: `deno task iterate`
+(backend type-check only). Rebuild just the UI: `deno task web-build`.
 
 ---
 

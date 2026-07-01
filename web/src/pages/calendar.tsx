@@ -159,7 +159,7 @@ export function CalendarPage() {
       }
     },
     onSuccess: (_, f) => {
-      qc.invalidateQueries({ queryKey: ['events', f._colName || defaultCol] })
+      void qc.invalidateQueries({ queryKey: ['events', f._colName || defaultCol] })
       setForm(null)
       toast.success(isNew ? 'Event created' : 'Event saved')
     },
@@ -169,7 +169,7 @@ export function CalendarPage() {
   const del = useMutation({
     mutationFn: (f: EventForm) => caldav.deleteEvent(f._colName || defaultCol, f.uid),
     onSuccess: (_, f) => {
-      qc.invalidateQueries({ queryKey: ['events', f._colName || defaultCol] })
+      void qc.invalidateQueries({ queryKey: ['events', f._colName || defaultCol] })
       setForm(null)
       toast.success('Event deleted')
     },
@@ -280,7 +280,7 @@ export function CalendarPage() {
             onNavigate={setDate}
             toolbar={false}
             eventPropGetter={(event) => {
-              const colName = (event as RBCEvent).resource?._colName
+              const colName = (event).resource?._colName
               const c = colName ? collectionColor(names, colName) : accentColor
               return {
                 style: {
@@ -293,7 +293,7 @@ export function CalendarPage() {
               }
             }}
             onSelectEvent={(e) => {
-              const ev = (e as RBCEvent).resource
+              const ev = (e).resource
               setForm({
                 uid: ev.uid,
                 summary: ev.summary,

@@ -1,12 +1,15 @@
 {
   "version": "0.1.0",
   "tasks": {
-    "start": "deno run --unstable-kv --allow-net --allow-read --allow-write --allow-env server.ts",
-    "dev": "deno run --watch --unstable-kv --allow-net --allow-read --allow-write --allow-env server.ts",
+    "start": "deno run --unstable-kv --allow-net --allow-read --allow-write --allow-env --env-file=.env.local --env-file=.env server.ts",
+    "dev": "deno run --watch --unstable-kv --allow-net --allow-read --allow-write --allow-env --env-file=.env.local --env-file=.env server.ts",
+    "seed": "deno run --allow-net --env-file=.env.local --env-file=.env scripts/seed.ts",
     "web-dev": "cd web && npm run dev",
+    "web-lint": "cd web && npm run lint",
     "web-build": "cd web && npm run build",
+    "web-check": "cd web && npm run lint && npm run build",
     "iterate": "deno check server.ts",
-    "check": "deno lint && deno check server.ts && deno test --allow-net --allow-env tests/",
+    "check": "deno lint && deno check server.ts && deno test --allow-net --allow-env tests/ && deno task web-check",
     "test": "deno test --allow-net --allow-env tests/",
     "conformance": "deno test --allow-net --allow-env tests/conformance/"
   },

@@ -22,7 +22,7 @@ export const useCollectionStore = create<CollectionState>()(
       viewMode: 'today',
       hiddenCollections: [],
       focusedCollection: null,
-      theme: 'light' as 'light' | 'dark',
+      theme: 'light',
       setCollection: (name) => set({ activeCollection: name }),
       setViewMode: (mode) => set({ viewMode: mode }),
       toggleCollectionHidden: (name) =>

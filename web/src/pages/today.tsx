@@ -109,7 +109,7 @@ export function TodayPage() {
   const todayEvents: EventMeta[] = calCollections
     .flatMap((col, i) => {
       const color = collectionColor(names, col.name)
-      const data  = (eventQueries[i]?.data ?? []) as CalEvent[]
+      const data  = (eventQueries[i]?.data ?? [])
       return data
         .filter((e) => {
           const start = parseCalDate(e.start)
@@ -127,7 +127,7 @@ export function TodayPage() {
   const todayTodos: TodoMeta[] = collections
     .flatMap((col, i) => {
       const color = collectionColor(names, col.name)
-      const data  = (todoQueries[i]?.data ?? []) as Todo[]
+      const data  = (todoQueries[i]?.data ?? [])
       return data
         .filter((t) => {
           if (t.status === 'COMPLETED' || t.status === 'CANCELLED') return false
@@ -153,14 +153,14 @@ export function TodayPage() {
   // ── Mutations ────────────────────────────────────────────────────────────────
   const toggle = useMutation({
     mutationFn: ({ todo }: { todo: TodoMeta }) => {
-      const { _colName, _colDisplayName: _dn, _colColor: _cc, ...cleanTodo } = todo
+      const { _colName, ...cleanTodo } = todo
       return caldav.updateTodo(_colName, {
         ...cleanTodo,
         status: cleanTodo.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED',
       })
     },
     onSuccess: (_, { todo }) => {
-      qc.invalidateQueries({ queryKey: ['todos', todo._colName] })
+      void qc.invalidateQueries({ queryKey: ['todos', todo._colName] })
     },
   })
 

@@ -24,7 +24,7 @@ export function putTodo(
   collection: string,
   todo: Partial<Todo> & { uid: string; summary: string },
 ): Promise<void> {
-  return caldav.updateTodo(collection, todo as Todo & { uid: string; summary: string })
+  return caldav.updateTodo(collection, todo)
 }
 
 /** Delete any calendar object by uid — works for both events and todos. */

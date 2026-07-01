@@ -72,13 +72,13 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
         url: url.trim() || undefined,
         categories: categories.length ? categories : undefined,
       }),
-    onSuccess: () => { invalidate(); onClose(); toast.success('Saved') },
+    onSuccess: () => { void invalidate(); onClose(); toast.success('Saved') },
     onError: (e) => toast.error(String(e)),
   })
 
   const del = useMutation({
     mutationFn: () => caldav.deleteTodo(collection, todo.uid),
-    onSuccess: () => { invalidate(); onClose(); toast.success('Deleted') },
+    onSuccess: () => { void invalidate(); onClose(); toast.success('Deleted') },
     onError: (e) => toast.error(String(e)),
   })
 

@@ -13,6 +13,6 @@ Under active reconstruction. The demolition phase has stripped the codebase to C
 ## Build
 
 ```
-deno task check     # lint + type-check + tests (the gate)
-deno task iterate   # fast type-check only
+deno task check     # the gate: backend lint + type-check + tests, then web lint + build
+deno task iterate   # fast backend type-check only
 ```

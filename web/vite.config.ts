@@ -1,4 +1,5 @@
 import path from 'node:path'
+import type { IncomingMessage } from 'node:http'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -19,15 +20,12 @@ export default defineConfig({
       // back through the Vite proxy instead of hitting :5232 directly (CORS).
       '/.well-known': {
         target: 'http://localhost:5232',
-        // @ts-ignore — 'on' exists in vite-http-proxy but is missing from Vite's ProxyOptions type
+        // @ts-expect-error — 'on' exists in vite-http-proxy at runtime but is missing from Vite's ProxyOptions type
         on: {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          proxyRes: (proxyRes: any) => {
-            if (proxyRes.headers.location) {
-              proxyRes.headers.location = proxyRes.headers.location.replace(
-                'http://localhost:5232',
-                '',
-              )
+          proxyRes: (proxyRes: IncomingMessage) => {
+            const location = proxyRes.headers.location
+            if (typeof location === 'string') {
+              proxyRes.headers.location = location.replace('http://localhost:5232', '')
             }
           },
         },

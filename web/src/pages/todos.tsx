@@ -44,7 +44,7 @@ export function TodosPage() {
         status: f.status,
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['todos', collection] })
+      void qc.invalidateQueries({ queryKey: ['todos', collection] })
       setNewForm(null)
       toast.success('Task created')
     },

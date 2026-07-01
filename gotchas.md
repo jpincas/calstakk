@@ -188,19 +188,38 @@ Zod. If a form grows complex enough to warrant them, add a section here.)_
 
 ### Deno tasks / `deno task check`
 
-- **`deno task check` is the gate.** `deno lint && deno check server.ts &&
-  deno test`. Same commands run by the pre-commit hook (`.githooks/pre-commit`)
-  and the Claude Code Stop hook. Don't `--no-verify` past it — fix the failure.
+- **`deno task check` is the one complete gate.** Backend (`deno lint` +
+  `deno check server.ts` + `deno test`) AND frontend (`deno task web-check` =
+  `npm run lint && npm run build` in `web/`). The pre-commit hook runs exactly
+  this. Don't `--no-verify` past it — fix the failure.
 
 - **`deno task iterate`** is `deno check server.ts` only — the fast inner-loop
-  check after a backend edit, no tests.
+  check after a backend edit; no tests, no web.
 
-- **The web build is separate.** `deno task web-build` runs `npm run build` in
-  `web/` (which runs `tsc -b` then `vite build`). The Deno gate does NOT build
-  the web UI, so run it yourself after UI changes before committing.
+- **`deno task web-build`** rebuilds `web/dist` after a UI change (served by
+  `server.ts` at `/app/`). It's already inside `check`, but run it alone when
+  you just want the built assets refreshed for `deno task start`.
 
 - **Deno lint excludes `web/`** (see `deno.json`) — the web UI has its own
   ESLint. Two lint passes, two configs; don't expect one to cover the other.
+
+### Env / config
+
+- **Config is env-only.** `src/config.ts` reads `CALSTAKK_*` vars with defaults;
+  there is no config file. `.env` (committed, non-secret defaults) is the
+  canonical list of what exists.
+
+- **`start`/`dev`/`seed` load `--env-file=.env.local --env-file=.env`.** Deno
+  applies **first file wins**, and real shell env overrides both — so precedence
+  is `shell env > .env.local > .env`. Secrets (e.g. `CALSTAKK_PASSWORD`) go in
+  the gitignored `.env.local`, never in `.env`.
+
+- **A missing `.env.local` only warns, it doesn't abort.** Fresh clones without
+  secrets run fine — the `Warning: ... '.env.local' was not found` line on boot
+  is expected, not an error.
+
+- **`deno test` does NOT load env files.** Tests are hermetic; set any var a
+  test needs explicitly inside the test.
 
 ### ESLint (typescript-eslint, type-checked)
 

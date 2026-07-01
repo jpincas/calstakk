@@ -25,6 +25,7 @@
       "Bash(ss:*)",
 
       "Bash(~/.deno/bin/deno check:*)",
+      "Bash(~/.deno/bin/deno task:*)",
       "Bash(~/.deno/bin/deno test:*)",
       "Bash(~/.deno/bin/deno lint:*)",
       "Bash(~/.deno/bin/deno run:*)",

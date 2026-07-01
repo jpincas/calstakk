@@ -41,12 +41,12 @@ export function CollectionSidebar({ collections }: Props) {
 
   const goNav = (item: NavItem) => {
     setViewMode(item.mode)
-    navigate(item.path)
+    void navigate(item.path)
   }
 
   const handleRowClick = (col: Collection) => {
     setCollection(col.name)
-    navigate(`/${col.name}`)
+    void navigate(`/${col.name}`)
   }
 
   // Build grouped structure: ungrouped first, then each group alphabetically

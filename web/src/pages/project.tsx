@@ -209,13 +209,12 @@ export function ProjectPage() {
     return () => ro.disconnect()
   }, [])
 
-  // Initialise settings state when modal opens
-  useEffect(() => {
-    if (settingsOpen) {
-      setSettingColor(col?.color ?? '')
-      setSettingGroup(col?.group ?? '')
-    }
-  }, [settingsOpen, col])
+  // Initialise settings edit state from the collection, then open the modal.
+  const openSettings = () => {
+    setSettingColor(col?.color ?? '')
+    setSettingGroup(col?.group ?? '')
+    setSettingsOpen(true)
+  }
 
   // ── Mutations ─────────────────────────────────────────────────────────────
 
@@ -233,7 +232,7 @@ export function ProjectPage() {
         : caldav.updateTodo(colName!, payload)
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['todos', colName] })
+      void qc.invalidateQueries({ queryKey: ['todos', colName] })
       setForm(null)
       toast.success('Task saved')
     },
@@ -251,7 +250,7 @@ export function ProjectPage() {
         location: f.location || undefined,
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['events', colName] })
+      void qc.invalidateQueries({ queryKey: ['events', colName] })
       setEventForm(null)
       toast.success('Event created')
     },
@@ -262,7 +261,7 @@ export function ProjectPage() {
     mutationFn: (name: string) =>
       caldav.updateCollectionProps(colName!, { displayName: name }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['collections'] })
+      void qc.invalidateQueries({ queryKey: ['collections'] })
       setEditingName(false)
     },
     onError: (e) => toast.error(String(e)),
@@ -275,7 +274,7 @@ export function ProjectPage() {
         group: settingGroup.trim() || null,
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['collections'] })
+      void qc.invalidateQueries({ queryKey: ['collections'] })
       setSettingsOpen(false)
       toast.success('Settings saved')
     },
@@ -483,7 +482,7 @@ export function ProjectPage() {
         controls={
           <>
             <button
-              onClick={() => setSettingsOpen(true)}
+              onClick={openSettings}
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 width: 28, height: 28, borderRadius: 6,
