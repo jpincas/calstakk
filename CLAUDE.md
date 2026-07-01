@@ -12,7 +12,7 @@ A private, self-hosted CalDAV/VTODO server + web UI. Goal: push the CalDAV (RFC 
 
 | Layer | Status |
 |---|---|
-| CalDAV server (`src/`) | ✅ Spec-complete. 523/523 conformance tests passing. |
+| CalDAV server (`src/`) | ✅ Spec-complete. 524/524 conformance tests passing. |
 | JS/TS CalDAV client (`web/src/api/`) | ✅ Complete. Covers all operations the UI needs. |
 | Web UI (`web/src/`) | 🔨 Under active development. |
 
@@ -157,7 +157,7 @@ cd web && npm run dev              # Vite dev server on http://localhost:5173
 ```bash
 ~/.deno/bin/deno check src/ tests/        # Backend type-check
 ~/.deno/bin/deno lint                     # Lint (excludes web/)
-~/.deno/bin/deno test --allow-net --allow-env tests/  # 523 conformance tests — must stay green
+~/.deno/bin/deno test --allow-net --allow-env tests/  # 524 conformance tests — must stay green
 cd web && npm run build                   # Web UI type-check + build
 ```
 
@@ -178,4 +178,4 @@ cd web && npm run build                   # Web UI type-check + build
 
 ## Test Suite
 
-523 conformance tests across 12 RFC files in `tests/conformance/`. Tests are spec-first — written against RFC text, not implementation. **All 523 must stay green.** Never soften, skip, or delete a test. If a backend change is needed to fix a test, get user sign-off first.
+524 conformance tests across 12 RFC files in `tests/conformance/`. Tests are spec-first — written against RFC text, not implementation. **All 524 must stay green.** Never soften, skip, or delete a test. If a backend change is needed to fix a test, get user sign-off first.

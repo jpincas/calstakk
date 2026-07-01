@@ -1,214 +1,38 @@
 # Gotchas
 
-Stack-specific traps. One file, organised by area. Hand-maintained — capture
+CalStakk-specific traps. One file, organised by area. Hand-maintained — capture
 new traps as you hit them, in the relevant area heading.
 
-`make check` enforces what it can; everything in this file is a trap that the
-gate doesn't catch (or can't easily). Read the area heading for the tool
+`deno task check` enforces what it can; everything in this file is a trap that
+the gate doesn't catch (or can't easily). Read the area heading for the tool
 you're about to touch before improvising.
 
-<!-- ─────────────────────────────────────────────────────────────────────── -->
-<!-- Project-specific gotchas. Edit this section per project; everything    -->
-<!-- below the "Stack canon" divider is wholly canon and synced.            -->
-<!-- ─────────────────────────────────────────────────────────────────────── -->
+## Backend (Deno / CalDAV)
 
-## Project
+The server in `src/` is spec-complete and hands-off (see `CLAUDE.md`). Traps here
+are for the rare, signed-off backend change only.
 
-_(none yet)_
+- **Don't swallow errors.** No `try/catch` that discards, no silent fallbacks — a
+  hidden error is one the gate can't catch. CalDAV clients need precise HTTP status
+  codes; masking an error usually means returning the wrong one.
 
-<!-- ─────────────────────────────────────────────────────────────────────── -->
-<!-- Stack canon — synced wholesale on each canon update. Don't edit below  -->
-<!-- this line in a downstream project; flag drift and fix in the canon.   -->
-<!-- ─────────────────────────────────────────────────────────────────────── -->
+- **Storage has two backends.** `MemoryStorage` (tests) and `storage_kv.ts` (Deno
+  KV, prod) implement the same `Storage` interface. A change to one that isn't
+  mirrored in the other passes tests but breaks prod, or vice versa.
 
-# Stack canon
-
-## Backend (Go)
-
-### Error handling
-
-- **Don't swallow errors.** No `try/catch` wrapping, `_ = ...` discards, or `recover()` from panics — let them propagate. A hidden error is one the gate can't catch.
-- **Boundary validation only.** The stack already covers the boundaries: Zod on the SPA, `validate:"..."` + `DecodeJSON[T]` on the server, `sql.ErrNoRows` → 404. Don't add redundant validation inside domain logic.
-
-### chi
-
-- **Handler tests must route through a `chi.Mux`.** `chi.URLParam` returns
-  `""` outside a chi-routed request, so direct `handler.ServeHTTP(w, r)`
-  calls silently break path params and produce confusing 500s or empty IDs.
-  Use a `setup<Module>Router(t)` helper to build a real mux and let it
-  dispatch — see `internal/api/notes_test.go`.
-
-### sqlc
-
-- **ASCII only in `db/queries/*.sql`.** sqlc's SQLite grammar parser has a
-  UTF-8 byte/rune offset bug. Any non-ASCII character anywhere in a query
-  file — comments, string literals, identifiers — silently corrupts query
-  boundaries: subsequent queries get truncated by the byte-vs-rune count
-  of the offending character. `sqlc generate` succeeds and emits
-  valid-looking Go, but the embedded SQL strings are mangled (e.g.
-  `ORDER BY full_na` instead of `ORDER BY full_name`). The build passes;
-  queries fail at runtime with "no such column", "syntax error near 'X'",
-  or unexpected `?1` / `?2` parse errors.
-
-  Rules:
-  - Comments use plain `-` / `--`, never `—` (em-dash), `–` (en-dash),
-    smart quotes, or any non-ASCII glyph.
-  - Identifiers (table/column/alias names) are ASCII only.
-  - For non-ASCII string literals, use SQLite's `char(N)` codepoint
-    syntax instead of writing the literal character:
-
-    | Glyph | `char()` |
-    |-------|----------|
-    | `á`   | `char(225)` |
-    | `é`   | `char(233)` |
-    | `í`   | `char(237)` |
-    | `ó`   | `char(243)` |
-    | `ú`   | `char(250)` |
-    | `ñ`   | `char(241)` |
-    | `Ñ`   | `char(209)` |
-
-  Atlas's parser handles non-ASCII fine in `schema.sql` — this is sqlc-specific.
-
-  Worked example (accent-folded LIKE search):
-
-  ```sql
-  -- name: ListUsersFiltered :many
-  SELECT id, email, full_name, role
-  FROM users
-  WHERE
-      (sqlc.narg('q') IS NULL OR
-          REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(full_name),
-              char(225),'a'),char(233),'e'),char(237),'i'),
-              char(243),'o'),char(250),'u'),char(241),'n')
-          LIKE '%' || sqlc.narg('q') || '%')
-  ORDER BY full_name;
-  ```
-
-  The Go handler folds the search query (lowercases + strips combining
-  marks via `golang.org/x/text/unicode/norm` NFD) before binding.
-
-- **`engine: sqlite`, not `sqlite3`** in `sqlc.yaml`.
-- **`ORDER BY ?` doesn't parameterise.** Whitelist sort columns in Go
-  and string-format into the SQL.
-- **`IN (?)` with a slice doesn't work.** Use `sqlc.slice('ids')` or
-  expand to `?,?,?` in Go.
-- **`LIKE ?` is exact match without wildcards.** Build `"%"+s+"%"` in Go.
-- **`COUNT(*)` returns `int64`, not `int`.**
-- **Aggregates over nullable columns return `interface{}`.** sqlc can't
-  prove non-null. Wrap with `CAST(COALESCE(SUM(x), 0) AS REAL)` (or
-  `AS INTEGER`) to force a concrete type. Same trap with nullable
-  `CASE WHEN ... ELSE NULL END`.
-- **JOINs need column aliases** — without them sqlc generates `Id_2`-style
-  names or errors on conflict. `SELECT a.id AS account_id, b.id AS book_id`.
-- **`sqlc.arg(name)`** is required when the same value appears more than
-  once in a query.
-- **Generated names are not predictable** — read `internal/db/sqlc/*.sql.go`
-  before wiring call sites.
-
-### sqlite
-
-- **Autoindex trap.** If a DB was ever populated by raw `db.Exec(schemaSQL)`,
-  SQLite stored inline `UNIQUE` constraints as
-  `sqlite_autoindex_<table>_<n>` — Atlas can't reconcile these. Drop and
-  recreate the table, or replace with named `UNIQUE INDEX` and update
-  `schema.sql`. Prevention: never let the app touch DDL.
-
-- **`ALTER ADD COLUMN NOT NULL DEFAULT … REFERENCES` fails on non-empty
-  tables.** SQLite can't validate the FK on the default. Add the column
-  nullable, backfill, then tighten in `schema.sql` (Atlas recreates the
-  table for you).
-
-- **No `DATE` type.** Use `TEXT` (`YYYY-MM-DD`) or `DATETIME` (sqlc maps
-  the latter to `time.Time`). Picking `DATE` produces surprising affinity
-  behaviour at query time.
-
-- **In-memory test DBs need DSN-encoded pragmas.** `PRAGMA foo = bar` via
-  `db.Exec` is per-connection — useless once the pool opens a second one.
-  Encode in the DSN: `file:test_<t.Name()>?mode=memory&_pragma=foreign_keys(1)`.
-  Handler tests also need `cache=shared` because handlers may begin a
-  transaction and call helpers via `*sql.DB`. Domain tests can drop
-  `cache=shared` and instead `db.SetMaxOpenConns(1)`.
-
-### atlas
-
-- **Read before writing any migration SQL.** Before writing a new migration (including seed), read an existing migration of the same type and check `schema.sql` for exact column names and nullability. Writing from memory produces wrong column names and missing fields that are only caught at `make db-reset` time.
-
-- **Parallel subagent waves produce migration number collisions.** Each wave independently picks the next available number from the sequence. Before merging any wave, run `ls db/migrations-demo/*.sql | sort` and rename colliding files (`0022_wave3.sql` → `0023_wave3.sql`) before merging. The gate won't catch this — Atlas applies migrations in filename order and silently skips or mis-sequences them.
-
-- **Pair `atlas schema apply` with `sqlc generate`.** The build passes if
-  you only do one. The app crashes at runtime when the live DB is ahead
-  of generated Go (or vice versa). `make iterate` and `make generate`
-  do both — use them rather than running them by hand.
-
-- **No DDL from the application.** Atlas owns the schema. No
-  `db.Exec(schemaSQL)` at startup, no `CREATE TABLE IF NOT EXISTS`, no
-  runtime migrations. Seed data only. Schema changes go through
-  `schema.sql` + `atlas schema apply`. Inline `UNIQUE` constraints written
-  by `db.Exec` poison the DB (see SQLite autoindex trap).
-
-- **Seed data is SQL, never Go.** Demo / dev fixtures live in
-  `db/migrations-demo/*.sql` and run via `make seed-demo` /
-  `make db-reset`. Don't write Go seed helpers (`testpersonnel.go`,
-  `seedDemo()`, `db.Exec` strings in `main.go`) — they drift from
-  `schema.sql` and bypass the `make db-reset` flow. Test fixtures use a
-  schema-only in-memory DB plus domain calls to create rows
-  (`internal/api/notes_test.go` is the canonical example); tests that
-  genuinely need the demo dataset `os.ReadFile` the migration files
-  rather than re-implementing them in Go.
-
-### tygo
-
-- **`time.Time` MUST have an explicit `type_mapping`.** Without it, tygo
-  emits a default that doesn't match what `encoding/json` actually
-  serialises. Stack convention in `tygo.yaml`:
-
-  ```yaml
-  type_mappings:
-    time.Time: "string /* ISO-8601 */"
-  ```
-
-- **JSON tags drive wire field names.** Without a `json:"..."` tag, tygo
-  uses the Go field name, which won't match what `encoding/json` emits.
-  Always add explicit json tags on wire types.
-
-- **`omitempty` becomes optional (`?:`) in TS.** That's the wire reality —
-  the field may be absent. Match it consistently in your Zod schemas, or
-  the SPA will type-error on `undefined` values from the server.
-
-- **The output is checked in.** `make gen-check` fails if
-  `web/src/types/api.ts` differs from a freshly run `tygo generate`.
-  Don't hand-edit; don't commit stale output.
-
-- **Keep wire types flat and concrete.** No `interface{}`, no `any`, no
-  embedded types tygo can't follow. Anything fancy belongs in domain
-  types, not wire types.
-
-### dotenv (godotenv)
-
-- **`cmd/server/main.go` loads `.env.local` then `.env` at startup.**
-  `_ = godotenv.Load(".env.local", ".env")` — first wins for any key,
-  and existing process env vars override both, so prod (which sets vars
-  directly) is unaffected. Both files are optional; missing is a no-op.
-
-- **`.env.local` is gitignored** (per the canon `.gitignore`); `.env` is
-  the committed file holding non-secret defaults shared across machines.
-  Never put secrets in `.env`. Real keys go in `.env.local` only.
-
-- **Read via `getEnv(key, default)`, not bare `os.Getenv`.** Empty string
-  is treated as unset so a stray `PORT=` line in `.env` can't blank out
-  a default. Stack-shaped vars: `DB_PATH`, `PORT`, `SPA_DIR`.
-
-- **Don't `godotenv.Load()` from tests or libraries.** Only `cmd/server`
-  loads the file. Tests should set env vars they care about explicitly
-  via `t.Setenv` so they're hermetic.
+- **The conformance suite is the spec.** 524 tests written against RFC text, not the
+  implementation. Never soften, skip, or delete one to make a change pass — that's a
+  regression signal, not a test problem.
 
 ## Frontend (React SPA)
 
 ### Vite
 
-- **The `/api` proxy in `server.proxy`** is what makes `vite dev` work
-  against the Go server. Without it, dev-mode `fetch('/api/notes')`
-  404s on the Vite server. See `web/vite.config.ts`.
+- **The CalDAV proxy in `server.proxy`** is what makes `vite dev` work
+  against the Deno server. It forwards `/principals` and `/calendars` to
+  `http://localhost:5232`, and rewrites redirect `Location` headers back
+  through the proxy (else the browser hits :5232 directly and CORS-fails).
+  See `web/vite.config.ts`.
 
 - **Path alias must match in three places.** `vite.config.ts`
   (`resolve.alias`), `tsconfig.json` (`paths`), and `tsconfig.app.json`
@@ -220,11 +44,12 @@ _(none yet)_
   deprecated`, remove `baseUrl` and keep `paths`.
 
 - **`vite build` runs `tsc -b` first** (per `web/package.json`). TS errors
-  fail the build — this is what catches drift between tygo output and
-  SPA usage.
+  fail the build — this is what catches drift between the CalDAV client's
+  types and SPA usage.
 
-- **`web/dist` is gitignored** — built and served by `cmd/server` at
-  runtime, never committed.
+- **`web/dist` is served by `server.ts` at `/app/`** via `serveDir`, with an
+  index.html SPA fallback for unknown sub-paths. Rebuild with
+  `deno task web-build` after UI changes.
 
 ### Tailwind v4
 
@@ -255,9 +80,9 @@ _(none yet)_
 - **Reuse before inventing.** Grep `web/src/` for an existing shadcn primitive or Tailwind utility before building a new pattern from scratch.
 
 - **The `form` component is NOT in the Nova preset registry.**
-  `npx shadcn@latest add form` fails silently. Wire React Hook Form
-  directly with raw `<form>` + shadcn `<Input>`/`<Label>` instead.
-  See `web/src/pages/notes.tsx` for the canonical shape.
+  `npx shadcn@latest add form` fails silently. Build forms with raw
+  `<form>` + shadcn `<Input>`/`<Label>`/`<Textarea>` and local state.
+  See `web/src/components/TodoEditPanel.tsx` for the shape.
 
 - **CLI flags.** `-t vite` for the Vite scaffold, `-b radix` for Radix
   primitives, `-p nova` (or vega/maia/lyra/mira/luma/sera) for presets.
@@ -299,7 +124,7 @@ _(none yet)_
 
 - **Server state lives in TanStack Query, not `useState`.** `useState` is
   for ephemeral UI state (open/closed, hover, focus). Anything fetched
-  from `/api` goes through queries / mutations.
+  via the `caldav` client goes through queries / mutations.
 
 - **Refs in React 19** — `forwardRef` is unnecessary; `ref` is now a
   regular prop. Old `forwardRef` code still works but new components
@@ -310,26 +135,26 @@ _(none yet)_
 
 ### React Router v7
 
-- **v7 has TWO modes: declarative (this stack) and framework (Remix-style).**
-  Most v7 docs default to framework mode. Stack choice: declarative SPA,
-  `BrowserRouter` at the root of `web/src/main.tsx`. Don't reach for
-  framework-mode APIs (`createBrowserRouter` with file conventions, route
-  modules, etc.).
+- **v7 has TWO modes: declarative (this project) and framework (Remix-style).**
+  Most v7 docs default to framework mode. Project choice: declarative SPA,
+  `BrowserRouter basename="/app"` at the root of `web/src/main.tsx`. Don't
+  reach for framework-mode APIs (`createBrowserRouter` with file
+  conventions, route modules, etc.).
 
-- **The Go server's SPA fallback is what makes deep links work.**
-  `cmd/server/main.go` serves `web/dist/index.html` for any non-`/api`
-  path that doesn't exist on disk. Without this, refreshing on
-  `/notes/123` 404s.
+- **The Deno server's SPA fallback is what makes deep links work.**
+  `server.ts` serves `web/dist/index.html` for any unknown path under
+  `/app/`. Without this, refreshing on `/app/tasks` 404s.
 
-- **`/api` is excluded from SPA fallback.** chi mounts `/api/*` first, so
-  JSON routes never reach the SPA handler.
+- **CalDAV paths (`/principals`, `/calendars`) are served by the protocol
+  handler, not the SPA.** They're matched before the `/app/` fallback, so
+  they never reach index.html.
 
-- **Use `fetch` (or the project's API client) for `/api`, not `<Link>`.**
-  `<Link>` is for in-SPA navigation; `/api` endpoints aren't React
-  Router routes.
+- **Talk to the `caldav` client for data, not `<Link>`.**
+  `<Link>` is for in-SPA navigation; CalDAV requests go through
+  `web/src/api`, never issued from components directly.
 
-- **`useParams<{ id: string }>()` doesn't enforce.** It's just a generic.
-  Validate at the use site.
+- **`useParams<{ collection: string }>()` doesn't enforce.** It's just a
+  generic. Validate at the use site.
 
 ### TanStack Query
 
@@ -341,13 +166,14 @@ _(none yet)_
   returns a Promise that ALSO trips no-floating-promises if you don't
   await it. Stack convention: `mutate` + `onSuccess`/`onError` callbacks.
 
-- **Server 422 → `setError`.** The project's `ApiError.fieldErrors` carries
-  field-keyed validation messages from the Go server. In `onError`,
-  iterate and call `form.setError(field, { message })`. The `_form` key
-  is for non-field errors — show as `toast.error`.
+- **CalDAV errors surface as `CalDAVError` (from `web/src/api`).** The client
+  throws on non-2xx WebDAV responses; catch in `onError` and surface via
+  `toast.error`. There are no field-keyed 422s — the server speaks CalDAV,
+  not a JSON validation API.
 
 - **`queryKey` is a structured cache key, not a URL.** Project convention:
-  top-level resource then optional id, e.g. `['notes']`, `['notes', id]`.
+  data type then collection then optional uid, e.g. `['todos', collection]`,
+  `['events', collection, uid]`.
 
 - **`QueryClient` lives at the app root.** Created once in `main.tsx`,
   wrapped around the router. Don't create per-component.
@@ -355,70 +181,26 @@ _(none yet)_
 - **No SSR / no prefetching.** This is a CSR SPA — the dehydrate/hydrate
   story doesn't apply.
 
-### React Hook Form
-
-- **`handleSubmit` Promise wrap.** See React above — same pattern.
-
-- **`defaultValues` are required for typed forms.** Without them,
-  `form.register` widens types and `setError`'s `field` parameter loses
-  its narrow string-literal type.
-
-- **Server 422 → `setError`.** See TanStack Query section for the full pattern; add `as keyof Values` for strict typing on the field argument.
-
-- **`aria-invalid={!!errors.field}`** is the stack convention for
-  accessibility — pair with the shadcn `Input` (which forwards
-  `aria-invalid`).
-
-- **The shadcn `form` helper is NOT used in this preset.** Use raw
-  `<form>` + shadcn `<Input>` + `<Label>` + a small error `<p>` instead.
-  See `web/src/pages/notes.tsx`.
-
-- **`reset()` after success.** Call inside `onSuccess` of the mutation to
-  clear the form.
-
-### Zod v4
-
-- **`.optional().transform()` breaks `zodResolver` typing.** When a
-  transform is present, the schema's input type ≠ output type, and
-  RHF's `Resolver<TFieldValues, TContext, TTransformedValues>` complains
-  the resolver's input doesn't match form values. **Fix**: keep schemas
-  pure (no `.transform`) when used with RHF; do post-validation
-  normalisation (e.g. empty-string → undefined) in the submit handler
-  instead.
-
-- **Server is the final arbiter.** Zod schemas mirror the Go
-  `validate:"..."` tags but the server validates again. 422 responses
-  come back keyed by JSON field name; merge them into RHF via
-  `setError`.
-
-- **`.optional()` returns `T | undefined`; `.nullish()` returns
-  `T | null | undefined`.** Pick deliberately — JSON omits undefined
-  fields; null is sent on the wire.
+_(CalStakk forms use local state + shadcn primitives, not React Hook Form or
+Zod. If a form grows complex enough to warrant them, add a section here.)_
 
 ## Tooling
 
-### Makefile / `make check`
+### Deno tasks / `deno task check`
 
-- **`make check` is the gate.** It treats any uncommitted change as
-  failure — if you have intentional WIP, commit or stash before running.
-  Order is fail-fast: lint → gen-check → tidy-check → build → test →
-  web-typecheck → web-lint → web-build → schema-diff.
+- **`deno task check` is the gate.** `deno lint && deno check server.ts &&
+  deno test`. Same commands run by the pre-commit hook (`.githooks/pre-commit`)
+  and the Claude Code Stop hook. Don't `--no-verify` past it — fix the failure.
 
-- **`make iterate`** runs `tygo generate && go build` after every Go edit
-  so the SPA's TS types never see a stale contract after a struct edit in
-  `internal/api`.
+- **`deno task iterate`** is `deno check server.ts` only — the fast inner-loop
+  check after a backend edit, no tests.
 
-- **`make run` depends on `web-build`.** First-time / fresh-clone path
-  works without manual setup — but every restart pays ~200ms for vite
-  build.
+- **The web build is separate.** `deno task web-build` runs `npm run build` in
+  `web/` (which runs `tsc -b` then `vite build`). The Deno gate does NOT build
+  the web UI, so run it yourself after UI changes before committing.
 
-- **`make web-*` targets all depend on `web-install`.** `npm install` is
-  idempotent and ~1s when nothing's changed, so always running it is
-  cheaper than debugging "tsc: not found" on a fresh clone.
-
-- **Go patterns are scoped to `./cmd/... ./internal/...`** rather than
-  `./...` because `web/node_modules` contains stray Go files that the
-  toolchain would otherwise descend into.
+- **Deno lint excludes `web/`** (see `deno.json`) — the web UI has its own
+  ESLint. Two lint passes, two configs; don't expect one to cover the other.
 
 ### ESLint (typescript-eslint, type-checked)
 
@@ -426,9 +208,8 @@ _(none yet)_
   ESLint startup; pays for itself with `no-floating-promises` and
   `no-misused-promises`.
 
-- **`src/components/ui/**` and `src/types/**` are ignored.** Shadcn
-  primitives re-export `xxxVariants` helpers (trips `react-refresh`);
-  tygo output is generated.
+- **`src/components/ui/**` is ignored.** Shadcn primitives re-export
+  `xxxVariants` helpers, which trips `react-refresh/only-export-components`.
 
 - **Config files (`*.{js,mjs,cjs}`) disable type-aware rules** — they're
   not part of the TS project, so type-aware linting would fail to resolve
@@ -436,4 +217,4 @@ _(none yet)_
 
 - **If you find yourself disabling `no-floating-promises` or
   `no-misused-promises` per-line, think twice.** They catch the most
-  common silent bugs in a TanStack Query + RHF codebase.
+  common silent bugs in a TanStack Query codebase.

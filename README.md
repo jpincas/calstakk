@@ -13,6 +13,6 @@ Under active reconstruction. The demolition phase has stripped the codebase to C
 ## Build
 
 ```
-make check   # lint + build + test (gate)
-make iterate # fast build only
+deno task check     # lint + type-check + tests (the gate)
+deno task iterate   # fast type-check only
 ```

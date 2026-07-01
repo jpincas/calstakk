@@ -244,10 +244,8 @@ const TODOS: Array<{ collection: string; fields: Parameters<typeof vtodo>[0] }> 
 
 console.log('Seeding CalStakk dev data...\n')
 
-// 1. Wipe existing non-inbox collections
+// 1. Wipe existing collections except capture, so we start clean
 const existing = await listCollections()
-const toDelete = existing.filter(n => n !== 'capture' && !COLLECTIONS.find(c => c.name === n) || false)
-// Actually delete all except capture so we start clean
 const toWipe = existing.filter(n => n !== 'capture')
 console.log(`Wiping existing collections: ${toWipe.join(', ') || 'none'}`)
 for (const name of toWipe) {
