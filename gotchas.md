@@ -28,6 +28,17 @@ are for the rare, signed-off backend change only.
 
 ### Vite
 
+- **Develop with `deno task dev` — one command, fixed ports.** It runs the
+  backend (:5232) + Vite HMR (:5173) via `scripts/dev.sh`, clearing stale servers
+  first. Open **http://localhost:5173/app/** for hot reload. `:5232/app/` is the
+  *built* bundle (no HMR) — that's `deno task start`, for production-like checks
+  only. Don't hand-run `npm run dev` / `deno task backend` separately unless you
+  know why; `dev` wires both together.
+
+- **The port is pinned with `strictPort: true`** (`web/vite.config.ts`). Vite
+  fails loudly if :5173 is occupied instead of drifting to :5174+, so a leftover
+  server surfaces immediately rather than spawning a duplicate on a random port.
+
 - **The CalDAV proxy in `server.proxy`** is what makes `vite dev` work
   against the Deno server. It forwards `/principals` and `/calendars` to
   `http://localhost:5232`, and rewrites redirect `Location` headers back

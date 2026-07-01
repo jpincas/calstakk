@@ -13,6 +13,12 @@ export default defineConfig({
     },
   },
   server: {
+    // Pin the port. strictPort makes vite FAIL if 5173 is taken rather than
+    // silently drifting to 5174+ — so a stale server surfaces loudly instead of
+    // spawning a duplicate on an unpredictable port. `scripts/dev.sh` clears the
+    // port first, so in normal use it's always free.
+    port: 5173,
+    strictPort: true,
     proxy: {
       '/principals': 'http://localhost:5232',
       '/calendars': 'http://localhost:5232',

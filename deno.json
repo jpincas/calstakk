@@ -2,7 +2,8 @@
   "version": "0.1.0",
   "tasks": {
     "start": "deno run --unstable-kv --allow-net --allow-read --allow-write --allow-env --env-file=.env.local --env-file=.env server.ts",
-    "dev": "deno run --watch --unstable-kv --allow-net --allow-read --allow-write --allow-env --env-file=.env.local --env-file=.env server.ts",
+    "backend": "deno run --watch --unstable-kv --allow-net --allow-read --allow-write --allow-env --env-file=.env.local --env-file=.env server.ts",
+    "dev": "bash scripts/dev.sh",
     "seed": "deno run --allow-net --env-file=.env.local --env-file=.env scripts/seed.ts",
     "web-dev": "cd web && npm run dev",
     "web-lint": "cd web && npm run lint",

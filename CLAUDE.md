@@ -140,21 +140,22 @@ web/src/
 
 ## Dev Workflow
 
-### Run the server
+### Develop the UI (hot reload) — the one command
 ```bash
-~/.deno/bin/deno task dev          # CalDAV server on http://localhost:5232
-# Web UI at http://localhost:5232/app/
-# No auth in dev (no CALSTAKK_PASSWORD set)
+~/.deno/bin/deno task dev          # backend :5232 + Vite HMR :5173, fixed ports
 ```
+**Open the app at http://localhost:5173/app/** — that's the Vite dev server with
+hot reload. It starts both processes on fixed ports, clears any stale servers
+first (no zombies, no port drift), and tears both down on exit. Run it as a
+background task. No auth in dev (no `CALSTAKK_PASSWORD` set).
 
-### Run the web UI dev server (hot reload)
-```bash
-~/.deno/bin/deno task web-dev      # Vite dev server on http://localhost:5173
-# Note: CalDAV requests proxy to :5232 — check web/vite.config.ts for proxy config
-```
+Do **not** open **:5232/app/** for UI work — that's the backend serving the last
+*built* bundle (`web/dist`), with no hot reload. That mode is `deno task start`,
+for verifying the production-like build only. `deno task backend` runs just the
+backend (watch) if you ever need it alone.
 
 ### Config / env
-Vars are read from the environment by `src/config.ts`. `deno task start|dev|seed`
+Vars are read from the environment by `src/config.ts`. `deno task start|backend|dev|seed`
 load `.env.local` then `.env` (first wins; real shell env overrides both):
 - **`.env`** — committed, non-secret defaults; the canonical list of every var.
 - **`.env.local`** — gitignored, per-machine secrets (e.g. `CALSTAKK_PASSWORD`).
