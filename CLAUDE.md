@@ -181,3 +181,17 @@ runs it; don't `--no-verify` past it. Fast inner loop: `deno task iterate`
 ## Test Suite
 
 524 conformance tests across 12 RFC files in `tests/conformance/`. Tests are spec-first — written against RFC text, not implementation. **All 524 must stay green.** Never soften, skip, or delete a test. If a backend change is needed to fix a test, get user sign-off first.
+
+## Rules
+
+- **Quality.** Don't ship substandard, unchecked, or unfinished work. This is not
+  an MVP or a prototype — no cut corners. Completion means full completion.
+- **The gate is non-negotiable.** Every change passes `deno task check`; the
+  pre-commit hook enforces it. Don't `--no-verify` past it — fix the failure.
+- **Never soften a test to make it pass.** A red conformance test is a real
+  regression: fix the code, or get sign-off to touch the backend (see *Backend —
+  Hands Off*). Same for lint — fix it, don't `eslint-disable` it away.
+- **Seed data stays rich.** Keep `scripts/seed.ts` at ≥ 5–10 varied rows per
+  collection so the UI exercises real lists, filters, and edge cases.
+- **Verify dispatched work.** Subagents don't self-gate here — read the diff and
+  run the gate before accepting their output. A green gate only proves it compiles.
