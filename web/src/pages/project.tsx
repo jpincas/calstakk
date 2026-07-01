@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams } from 'react-router-dom'
 import { caldav } from '@/api'
-import { parseCalDate, fmtTime, fmtDate, isOverdue } from '@/lib/dates'
+import { parseCalDate, fmtTime } from '@/lib/dates'
 import { collectionColor } from '@/lib/colors'
 import { useCollectionStore } from '@/state/collection'
 import { Button } from '@/components/ui/button'
@@ -16,8 +16,9 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { Settings, Plus, CheckCircle2, Circle, AlertCircle, ChevronDown } from 'lucide-react'
+import { Settings, Plus } from 'lucide-react'
 import { PageBar } from '@/components/layout/PageBar'
+import { TaskList } from '@/components/TaskList'
 import {
   format,
   isToday,
@@ -39,13 +40,6 @@ const SETTING_COLORS = [
   '#D97706', '#EA580C', '#DC2626', '#BE185D',
   '#7C3AED', '#6366F1', '#8B5CF6', '#10B981',
 ]
-
-const STATUS_CONFIG = {
-  'NEEDS-ACTION': { label: 'To do',       color: 'var(--muted-foreground)', bg: 'var(--accent)' },
-  'IN-PROCESS':   { label: 'In progress', color: '#F59E0B',                  bg: 'rgba(245,158,11,0.12)' },
-  'COMPLETED':    { label: 'Done',        color: '#10B981',                  bg: 'rgba(16,185,129,0.12)' },
-  'CANCELLED':    { label: 'Cancelled',   color: 'var(--ui-text-muted)',     bg: 'var(--muted)' },
-}
 
 const BUCKET_ORDER = ['Today', 'This Week', 'This Month', 'Next Month', 'Later'] as const
 type Bucket = typeof BUCKET_ORDER[number]
@@ -88,16 +82,6 @@ const emptyEventForm = (): EventForm => ({
   href: '',
 })
 
-/** Convert iCal date (20260630) to HTML date input value (2026-06-30) */
-function icalToInputDate(due?: string): string {
-  if (!due) return ''
-  const s = due.slice(0, 8) // YYYYMMDD
-  if (s.length === 8 && /^\d{8}$/.test(s)) {
-    return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`
-  }
-  return due
-}
-
 function getEventBucket(start: Date, today: Date): Bucket | null {
   if (isBefore(start, startOfDay(today))) return null
   if (isToday(start)) return 'Today'
@@ -110,28 +94,6 @@ function getEventBucket(start: Date, today: Date): Bucket | null {
   const nmEnd = endOfMonth(addMonths(today, 1))
   if (!isBefore(start, nmStart) && !isAfter(start, nmEnd)) return 'Next Month'
   return 'Later'
-}
-
-// ── Sub-components ───────────────────────────────────────────────────────────
-
-function StatusBadge({ status }: { status: string }) {
-  const cfg = STATUS_CONFIG[status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG['NEEDS-ACTION']
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        padding: '2px 8px',
-        borderRadius: 20,
-        fontSize: 10,
-        fontWeight: 600,
-        background: cfg.bg,
-        color: cfg.color,
-      }}
-    >
-      {cfg.label}
-    </span>
-  )
 }
 
 // ── Main component ───────────────────────────────────────────────────────────
@@ -178,23 +140,9 @@ export function ProjectPage() {
 
   const displayName = col?.display_name ?? colName ?? 'Project'
 
-  const active = useMemo(
-    () =>
-      todos
-        .filter((t) => t.status !== 'COMPLETED' && t.status !== 'CANCELLED')
-        .sort((a, b) => {
-          if (!a.due && !b.due) return 0
-          if (!a.due) return 1
-          if (!b.due) return -1
-          return a.due.localeCompare(b.due)
-        }),
-    [todos],
-  )
-
-  const completed = useMemo(
-    () => todos.filter((t) => t.status === 'COMPLETED'),
-    [todos],
-  )
+  // Counts for PageBar — TaskList owns the full render; todos query is shared cache
+  const activeCount = useMemo(() => todos.filter(t => t.status !== 'COMPLETED' && t.status !== 'CANCELLED').length, [todos])
+  const completedCount = useMemo(() => todos.filter(t => t.status === 'COMPLETED').length, [todos])
 
   const existingGroups = useMemo(() => {
     const groups = new Set<string>()
@@ -239,7 +187,6 @@ export function ProjectPage() {
 
   const [form, setForm] = useState<TodoForm | null>(null)
   const [isNew, setIsNew] = useState(false)
-  const [showCompleted, setShowCompleted] = useState(false)
   const [eventForm, setEventForm] = useState<EventForm | null>(null)
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState('')
@@ -293,26 +240,6 @@ export function ProjectPage() {
     onError: (e) => toast.error(String(e)),
   })
 
-  const todoDel = useMutation({
-    mutationFn: (uid: string) => caldav.deleteTodo(colName!, uid),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['todos', colName] })
-      setForm(null)
-      toast.success('Deleted')
-    },
-    onError: (e) => toast.error(String(e)),
-  })
-
-  const todoToggle = useMutation({
-    mutationFn: (todo: Todo) =>
-      caldav.updateTodo(colName!, {
-        ...todo,
-        status: todo.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED',
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['todos', colName] }),
-    onError: (e) => toast.error(String(e)),
-  })
-
   const eventSave = useMutation({
     mutationFn: (f: EventForm) =>
       caldav.createEvent(colName!, {
@@ -355,7 +282,7 @@ export function ProjectPage() {
     onError: (e) => toast.error(String(e)),
   })
 
-  // ── Inline name edit handlers ─────────────────────────────────────────────
+  // ── Name edit handler ─────────────────────────────────────────────────────
 
   const commitName = () => {
     if (nameInput.trim() && nameInput.trim() !== displayName) {
@@ -378,65 +305,9 @@ export function ProjectPage() {
   // ── Pane renderers ────────────────────────────────────────────────────────
 
   const TasksPane = (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        minWidth: 0,
-      }}
-    >
-      {/* Task list */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
-        {/* Active todos */}
-        {active.length === 0 ? (
-          <div style={{ padding: '32px 16px', textAlign: 'center' }}>
-            <CheckCircle2 style={{ width: 22, height: 22, color: 'var(--border)', margin: '0 auto 8px' }} />
-            <p style={{ fontSize: 13, color: 'var(--ui-text-muted)', margin: 0 }}>All caught up.</p>
-          </div>
-        ) : (
-          active.map((todo) => <TodoRow key={todo.uid} todo={todo} />)
-        )}
-
-        {/* Completed section */}
-        {completed.length > 0 && (
-          <div>
-            <button
-              onClick={() => setShowCompleted((v) => !v)}
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '10px 16px',
-                background: 'none',
-                border: 'none',
-                borderTop: '1px solid var(--border)',
-                cursor: 'pointer',
-                color: 'var(--muted-foreground)',
-                fontSize: 12,
-                fontWeight: 500,
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--hover-bg)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <CheckCircle2 style={{ width: 13, height: 13, color: 'var(--ui-text-muted)' }} />
-                Completed ({completed.length})
-              </span>
-              <ChevronDown
-                style={{
-                  width: 13,
-                  height: 13,
-                  transform: showCompleted ? 'rotate(180deg)' : 'none',
-                  transition: 'transform 150ms',
-                }}
-              />
-            </button>
-            {showCompleted && completed.map((todo) => <TodoRow key={todo.uid} todo={todo} />)}
-          </div>
-        )}
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+        <TaskList collection={colName} accentColor={color.bg} />
       </div>
     </div>
   )
@@ -562,105 +433,6 @@ export function ProjectPage() {
     </div>
   )
 
-  // ── Todo row sub-component ────────────────────────────────────────────────
-
-  function TodoRow({ todo }: { todo: Todo }) {
-    const done = todo.status === 'COMPLETED'
-    const overdue = !done && isOverdue(todo.due)
-    return (
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          gap: 10,
-          padding: '10px 16px',
-          borderBottom: '1px solid var(--border)',
-          cursor: 'pointer',
-          transition: 'background 100ms',
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--hover-bg)')}
-        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-        onClick={() => {
-          setForm({
-            uid: todo.uid,
-            summary: todo.summary,
-            description: todo.description ?? '',
-            due: icalToInputDate(todo.due),
-            status: todo.status ?? 'NEEDS-ACTION',
-          })
-          setIsNew(false)
-        }}
-      >
-        <button
-          style={{
-            flexShrink: 0,
-            marginTop: 1,
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            padding: 0,
-            transition: 'opacity 100ms',
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
-          onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-          onClick={(e) => { e.stopPropagation(); todoToggle.mutate(todo) }}
-        >
-          {done ? (
-            <CheckCircle2 style={{ width: 16, height: 16, color: '#10B981' }} />
-          ) : overdue ? (
-            <AlertCircle style={{ width: 16, height: 16, color: 'var(--destructive)' }} />
-          ) : (
-            <Circle style={{ width: 16, height: 16, color: color.bg }} />
-          )}
-        </button>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p
-            style={{
-              fontSize: 13,
-              fontWeight: 400,
-              color: done ? 'var(--ui-text-muted)' : 'var(--foreground)',
-              margin: 0,
-              textDecoration: done ? 'line-through' : 'none',
-            }}
-          >
-            {todo.summary}
-          </p>
-          {todo.description && (
-            <p
-              style={{
-                fontSize: 11,
-                color: 'var(--muted-foreground)',
-                margin: '2px 0 0',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {todo.description}
-            </p>
-          )}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-          {todo.due && (
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 500,
-                padding: '2px 7px',
-                borderRadius: 20,
-                background: overdue ? 'rgba(227,94,94,0.12)' : 'var(--accent)',
-                color: overdue ? 'var(--destructive)' : 'var(--muted-foreground)',
-              }}
-            >
-              {fmtDate(todo.due)}
-            </span>
-          )}
-          {todo.status && <StatusBadge status={todo.status} />}
-        </div>
-      </div>
-    )
-  }
-
   // ── Main render ───────────────────────────────────────────────────────────
 
   return (
@@ -707,7 +479,7 @@ export function ProjectPage() {
             </span>
           )
         }
-        detail={`${active.length} active · ${completed.length} completed`}
+        detail={`${activeCount} active · ${completedCount} completed`}
         controls={
           <>
             <button
@@ -805,44 +577,29 @@ export function ProjectPage() {
         )}
       </div>
 
-      {/* Task dialog */}
+      {/* New task modal — creation only */}
       <Dialog open={!!form} onOpenChange={(o) => !o && setForm(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{isNew ? 'New task' : 'Edit task'}</DialogTitle>
+            <DialogTitle>New task</DialogTitle>
           </DialogHeader>
           {form && (
             <div className="grid gap-3">
               <div>
                 <Label>Title</Label>
-                <Input
-                  value={form.summary}
-                  onChange={(e) => setForm({ ...form, summary: e.target.value })}
-                  autoFocus
-                />
+                <Input value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} autoFocus />
               </div>
               <div>
                 <Label>Description</Label>
-                <Input
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                />
+                <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
               </div>
               <div>
                 <Label>Due date</Label>
-                <Input
-                  type="date"
-                  value={form.due}
-                  onChange={(e) => setForm({ ...form, due: e.target.value })}
-                />
+                <Input type="date" value={form.due} onChange={(e) => setForm({ ...form, due: e.target.value })} />
               </div>
               <div>
                 <Label>Status</Label>
-                <select
-                  value={form.status}
-                  onChange={(e) => setForm({ ...form, status: e.target.value })}
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                >
+                <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm">
                   <option value="NEEDS-ACTION">To do</option>
                   <option value="IN-PROCESS">In progress</option>
                   <option value="COMPLETED">Completed</option>
@@ -851,18 +608,9 @@ export function ProjectPage() {
               </div>
             </div>
           )}
-          <DialogFooter className="gap-2">
-            {!isNew && (
-              <Button variant="destructive" onClick={() => todoDel.mutate(form!.uid)}>
-                Delete
-              </Button>
-            )}
-            <Button
-              onClick={() => todoSave.mutate(form!)}
-              disabled={todoSave.isPending}
-              style={{ background: color.bg, color: '#fff', border: 'none' }}
-            >
-              Save
+          <DialogFooter>
+            <Button onClick={() => todoSave.mutate(form!)} disabled={todoSave.isPending || !form?.summary} style={{ background: color.bg, color: '#fff', border: 'none' }}>
+              Create
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,4 +1,4 @@
-import type { Collection, CalEvent, Todo } from '@/types'
+import type { Collection, CalEvent, Todo, Section } from '@/types'
 import { CalDAVError, type SyncResult, type FreeBusySlot } from './types'
 import { parseICalProps, extractComponent, toICalDateTime, first, all, nowIcal, buildVCalendar } from './ical'
 import {
@@ -291,6 +291,54 @@ export class CalDAVClient {
     await this._delete(objectPath(home, collection, uid))
   }
 
+  // ── Sections ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Read the ordered section registry for a collection.
+   * Stored as a custom dead-property on the collection (cs:sections in CS_NS),
+   * containing a JSON array. Returns [] if no sections have been created yet.
+   */
+  async getSections(collection: string): Promise<Section[]> {
+    const home = await this.discover()
+    const path = `${home}/${collection}`
+    const body = `<?xml version="1.0" encoding="UTF-8"?>
+<d:propfind xmlns:d="DAV:" xmlns:cs="${CS_NS}">
+  <d:prop><cs:sections/></d:prop>
+</d:propfind>`
+    const doc = await propfind(path, '0', body, this.headers())
+    const resp = doc.getElementsByTagNameNS(DAV_NS, 'response')[0]
+    if (!resp) return []
+    const raw = nsText(resp, CS_NS, 'sections')
+    if (!raw) return []
+    try {
+      return JSON.parse(raw) as Section[]
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Persist the ordered section registry for a collection via PROPPATCH.
+   * Last-write-wins (no ETag); safe for single-user self-hosted deployments.
+   */
+  async setSections(collection: string, sections: Section[]): Promise<void> {
+    const home = await this.discover()
+    const path = `${home}/${collection}`
+    const json = escXml(JSON.stringify(sections))
+    const body = `<?xml version="1.0" encoding="UTF-8"?>
+<d:propertyupdate xmlns:d="DAV:" xmlns:cs="${CS_NS}">
+  <d:set><d:prop>
+    <cs:sections>${json}</cs:sections>
+  </d:prop></d:set>
+</d:propertyupdate>`
+    const res = await fetch(path, {
+      method: 'PROPPATCH',
+      headers: this.headers({ 'Content-Type': 'application/xml' }),
+      body,
+    })
+    if (!res.ok && res.status !== 207) throw new CalDAVError(res.status, `setSections failed: ${res.status}`)
+  }
+
   // ── Sync ─────────────────────────────────────────────────────────────────────
 
   /**
@@ -385,21 +433,11 @@ export class CalDAVClient {
 
   // ── Internal helpers ─────────────────────────────────────────────────────────
 
-  /** PUT a calendar object, sending the correct conditional header for create vs update. */
+  /** PUT a calendar object. Creates guard against overwrite; updates overwrite unconditionally. */
   private async _putObject(path: string, ics: string, mode: 'create' | 'update'): Promise<void> {
-    let etag: string | null = null
-    if (mode === 'update') {
-      etag = await this._etag(path)
-    }
     const headers: Record<string, string> = { 'Content-Type': 'text/calendar' }
-    if (etag) headers['If-Match'] = etag
-    else headers['If-None-Match'] = '*'
-
-    const res = await fetch(path, {
-      method: 'PUT',
-      headers: this.headers(headers),
-      body: ics,
-    })
+    if (mode === 'create') headers['If-None-Match'] = '*'
+    const res = await fetch(path, { method: 'PUT', headers: this.headers(headers), body: ics })
     if (!res.ok) throw new CalDAVError(res.status, `PUT failed: ${res.status}`)
   }
 
@@ -408,14 +446,6 @@ export class CalDAVClient {
     if (!res.ok) throw new CalDAVError(res.status, `DELETE failed: ${res.status}`)
   }
 
-  private async _etag(path: string): Promise<string | null> {
-    try {
-      const res = await fetch(path, { method: 'HEAD', headers: this.headers() })
-      return res.ok ? (res.headers.get('ETag') ?? null) : null
-    } catch {
-      return null
-    }
-  }
 }
 
 // ── Pure helpers (no class dependency) ──────────────────────────────────────
@@ -466,6 +496,9 @@ function buildTodo(
     priority: first(p['PRIORITY']) ? parseInt(first(p['PRIORITY'])!) : undefined,
     related_to: first(p['RELATED-TO']) ?? undefined,
     categories: all(p['CATEGORIES']).filter(Boolean),
+    url: first(p['URL']) ?? undefined,
+    x_sort_order: first(p['X-SORT-ORDER']) ? parseInt(first(p['X-SORT-ORDER'])!) : undefined,
+    section_id: first(p['X-SECTION-ID']) ?? undefined,
     href: `${collectionHref}/${uid}.ics`,
   }
 }
@@ -501,6 +534,10 @@ function buildTodoIcs(todo: Partial<Todo> & { uid: string; summary: string }): s
   if (todo.status) lines.push(`STATUS:${todo.status.toUpperCase()}`)
   if (todo.priority !== undefined) lines.push(`PRIORITY:${todo.priority}`)
   if (todo.related_to) lines.push(`RELATED-TO:${todo.related_to}`)
+  if (todo.url) lines.push(`URL:${todo.url}`)
+  if (todo.categories?.length) todo.categories.forEach((c) => lines.push(`CATEGORIES:${c}`))
+  if (todo.x_sort_order !== undefined) lines.push(`X-SORT-ORDER:${todo.x_sort_order}`)
+  if (todo.section_id) lines.push(`X-SECTION-ID:${todo.section_id}`)
   lines.push('END:VTODO')
   return buildVCalendar(lines)
 }

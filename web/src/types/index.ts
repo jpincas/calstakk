@@ -32,7 +32,16 @@ export interface Todo {
   priority?: number
   related_to?: string
   categories?: string[]
+  url?: string
+  x_sort_order?: number
+  section_id?: string
   href: string
+}
+
+/** A named group of tasks within a collection. Persisted as X-SECTION-ID on each VTODO. */
+export interface Section {
+  id: string
+  name: string
 }
 
 export type DataType = 'calendar' | 'todos'

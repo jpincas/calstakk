@@ -19,8 +19,10 @@ export default defineConfig({
       // back through the Vite proxy instead of hitting :5232 directly (CORS).
       '/.well-known': {
         target: 'http://localhost:5232',
+        // @ts-ignore — 'on' exists in vite-http-proxy but is missing from Vite's ProxyOptions type
         on: {
-          proxyRes: (proxyRes) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          proxyRes: (proxyRes: any) => {
             if (proxyRes.headers.location) {
               proxyRes.headers.location = proxyRes.headers.location.replace(
                 'http://localhost:5232',
