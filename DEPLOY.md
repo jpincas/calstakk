@@ -12,8 +12,9 @@ one command from the repo root:
 This is the **`deno deploy` CLI** (bundled with modern Deno, `deno deploy
 --help`), not the older standalone `deployctl` — they target different
 generations of the platform and are not interchangeable. `DENO_DEPLOY_TOKEN`
-must be set in the shell profile (`~/.zshrc`) for non-interactive auth — the
-browser-based interactive login fails on this machine (no working
+must be set in **`~/.zshenv`** (not `~/.zshrc` — that's only read by
+interactive shells, so agent/CI shells never see it) for non-interactive
+auth — the browser-based interactive login fails on this machine (no working
 Secret-Service/keychain daemon), and `deployctl`'s classic org/project model
 does not match this account's org at all (using it here previously created a
 stray duplicate "classic" org — harmless but worth knowing if one shows up in
