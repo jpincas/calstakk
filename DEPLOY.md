@@ -12,10 +12,12 @@ one command from the repo root:
 This is the **`deno deploy` CLI** (bundled with modern Deno, `deno deploy
 --help`), not the older standalone `deployctl` — they target different
 generations of the platform and are not interchangeable. `DENO_DEPLOY_TOKEN`
-must be set in **`~/.zshenv`** (not `~/.zshrc` — that's only read by
-interactive shells, so agent/CI shells never see it) for non-interactive
-auth — the browser-based interactive login fails on this machine (no working
-Secret-Service/keychain daemon), and `deployctl`'s classic org/project model
+is exported in `~/.zshrc` for non-interactive auth; agent shells see it via
+plain env inheritance from the terminal Claude Code was launched from — so
+after adding/changing it, **restart the shell before relaunching Claude
+Code**, or the export never reaches the process tree. The browser-based
+interactive login fails on this machine (no working Secret-Service/keychain
+daemon), and `deployctl`'s classic org/project model
 does not match this account's org at all (using it here previously created a
 stray duplicate "classic" org — harmless but worth knowing if one shows up in
 the dashboard).
