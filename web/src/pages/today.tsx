@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
-import { format, isToday, isBefore, startOfDay } from 'date-fns'
+import { format, isToday, isBefore, startOfDay, addDays } from 'date-fns'
 import { useNavigate } from 'react-router-dom'
 import { caldav } from '@/api'
 import { collectionColor } from '@/lib/colors'
 import { calendarLinkFor, parseCalDate, fmtTime, fmtDateShort } from '@/lib/dates'
+import { expandEvent, type Occurrence } from '@/lib/recur'
 import { Circle, CheckCircle2, Sun } from 'lucide-react'
 import { PageBar } from '@/components/layout/PageBar'
-import type { Collection, CalEvent, Todo } from '@/types'
+import type { Collection, Todo } from '@/types'
 
 // Colour stops: [hour, [r, g, b]]
 // Golden morning (7–9:30am) and golden evening (5:30–6:30pm) use bright amber that needs dark text.
@@ -60,8 +61,8 @@ function timeOfDayColors(date: Date | null): { bg: string; text: string } {
   return fallback
 }
 
-type EventMeta = CalEvent & { _colName: string; _colDisplayName: string; _colColor: string }
-type TodoMeta  = Todo      & { _colName: string; _colDisplayName: string; _colColor: string }
+type EventMeta = { occ: Occurrence; _colName: string; _colDisplayName: string; _colColor: string }
+type TodoMeta  = Todo & { _colName: string; _colDisplayName: string; _colColor: string }
 
 export function TodayPage() {
   const qc  = useQueryClient()
@@ -110,23 +111,25 @@ export function TodayPage() {
   })
 
   // ── Derived data ─────────────────────────────────────────────────────────────
+  // Recurring events are expanded over today's window; an event appears once
+  // per occurrence that starts today (matching the previous raw-start filter).
+  const dayStart = startOfDay(now)
+  const dayEnd   = addDays(dayStart, 1)
   const todayEvents: EventMeta[] = calCollections
     .flatMap((col, i) => {
       const color = collectionColor(names, col.ref)
       const data  = (eventQueries[i]?.data ?? [])
       return data
-        .filter((e) => {
-          const start = parseCalDate(e.start)
-          return start && isToday(start)
-        })
-        .map((e) => ({
-          ...e,
+        .flatMap((e) => expandEvent(e, dayStart, dayEnd))
+        .filter((occ) => isToday(occ.start))
+        .map((occ) => ({
+          occ,
           _colName:        col.ref,
           _colDisplayName: col.display_name,
           _colColor:       col.color ?? color.bg,
         }))
     })
-    .sort((a, b) => a.start.localeCompare(b.start))
+    .sort((a, b) => a.occ.start.getTime() - b.occ.start.getTime())
 
   const todayTodos: TodoMeta[] = collections
     .flatMap((col, i) => {
@@ -253,19 +256,20 @@ export function TodayPage() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             {todayEvents.map((event) => {
-              const start = event.start ? parseCalDate(event.start) : null
-              const end   = event.end   ? parseCalDate(event.end)   : null
-              const { bg: bgColor, text: textColor } = event.all_day
+              const { occ } = event
+              const { start, end, allDay } = occ
+              const location = occ.fields.location
+              const { bg: bgColor, text: textColor } = allDay
                 ? { bg: '#71717a', text: '#fff' }
                 : timeOfDayColors(start)
-              const hourLabel = start && !event.all_day ? format(start, 'h') : null
-              const ampm      = start && !event.all_day ? format(start, 'a').toLowerCase() : null
-              const timeStr = !event.all_day && start
-                ? `${fmtTime(start)}${end ? ` — ${fmtTime(end)}` : ''}${event.location ? ` · ${event.location}` : ''}`
-                : event.location ?? null
+              const hourLabel = !allDay ? format(start, 'h') : null
+              const ampm      = !allDay ? format(start, 'a').toLowerCase() : null
+              const timeStr = !allDay
+                ? `${fmtTime(start)} — ${fmtTime(end)}${location ? ` · ${location}` : ''}`
+                : location ?? null
               return (
                 <div
-                  key={event.uid}
+                  key={`${event._colName}-${occ.master.uid}-${occ.key}`}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -273,9 +277,9 @@ export function TodayPage() {
                     padding: '10px 10px',
                     borderRadius: 8,
                     transition: 'background 100ms',
-                    cursor: start ? 'pointer' : 'default',
+                    cursor: 'pointer',
                   }}
-                  onClick={start ? () => { void navigate(calendarLinkFor(start)) } : undefined}
+                  onClick={() => { void navigate(calendarLinkFor(start)) }}
                   onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--hover-bg)' }}
                   onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
                 >
@@ -299,7 +303,7 @@ export function TodayPage() {
                   {/* Content */}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontSize: 17, fontWeight: 500, color: 'var(--foreground)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {event.summary}
+                      {occ.fields.summary}
                     </p>
                     {timeStr && (
                       <p style={{ fontSize: 14, color: 'var(--muted-foreground)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

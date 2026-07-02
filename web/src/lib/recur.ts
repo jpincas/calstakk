@@ -414,6 +414,126 @@ export function cutSeriesBefore(occ: Occurrence): CalEvent | null {
   }
 }
 
+/** True when the series has skipped or edited occurrences at/after this slot. */
+export function hasCustomisationsFrom(occ: Occurrence): boolean {
+  const slot = parseCalDate(occ.recurrenceId)
+  if (!slot) return false
+  const cutMs = slot.getTime()
+  const atOrAfter = (v: string) => {
+    const d = parseCalDate(v)
+    return d !== null && d.getTime() >= cutMs
+  }
+  return (
+    (occ.master.exdates ?? []).some(atOrAfter) ||
+    (occ.master.overrides ?? []).some((o) => atOrAfter(o.recurrence_id))
+  )
+}
+
+/** Reduce an inherited COUNT by the occurrences the truncated series keeps. */
+function adjustCount(master: CalEvent, rrule: string, slot: Date): string {
+  const dtstart = parseCalDate(master.start)
+  if (!dtstart) return rrule
+  const allDay = !!master.all_day
+  const rruleStart = allDay ? toUTCDate(dtstart) : dtstart
+  const slotR = allDay ? toUTCDate(slot) : slot
+  let consumed: number
+  try {
+    const rule = new RRule({ ...RRule.parseString(rrule), dtstart: rruleStart })
+    consumed = rule.between(rruleStart, slotR, true).filter((d) => d.getTime() < slotR.getTime()).length
+  } catch {
+    return rrule
+  }
+  return rrule
+    .split(';')
+    .map((p) => (/^COUNT=/i.test(p) ? `COUNT=${Math.max(1, parseInt(p.slice(6), 10) - consumed)}` : p))
+    .join(';')
+}
+
+/** Render the master's DTEND value shifted so the event now starts at `slot`. */
+function shiftedEndValue(master: CalEvent, slot: Date, mStart: Date, mEnd: Date): string {
+  if (master.all_day || !master.end!.includes('T')) {
+    // Date arithmetic (not epoch ms) so a DST change can't skew the day.
+    const days = Math.round((mEnd.getTime() - mStart.getTime()) / DAY_MS)
+    const e = new Date(slot)
+    e.setDate(e.getDate() + days)
+    return localYmd(e)
+  }
+  const end = new Date(slot.getTime() + (mEnd.getTime() - mStart.getTime()))
+  return master.end!.endsWith('Z') ? compactUTC(end) : compactLocal(end)
+}
+
+/**
+ * Split a series at an occurrence for a this-and-future edit: the old master
+ * is truncated with UNTIL just before the slot (see cutSeriesBefore) and a
+ * new resource — the caller supplies its UID — carries the future portion:
+ * the master's content plus the edits, starting at this occurrence's original
+ * slot in the master's datetime form. An inherited COUNT is reduced by the
+ * occurrences the truncated series keeps; an inherited UNTIL stays valid.
+ * Overrides and exdates at/after the cut move to the new resource verbatim
+ * while their slots stay valid; a schedule change (new times or rule) resets
+ * them, matching applySeriesEdits. For time edits, `edits.start`/`edits.end`
+ * are the *occurrence-level* values and become the new series' start.
+ * Returns null when the cut lands at/before the first occurrence — the caller
+ * should apply a whole-series edit instead.
+ */
+export function splitSeries(
+  occ: Occurrence,
+  edits: SeriesEdits,
+  newUid: string,
+): { truncated: CalEvent; detached: Omit<CalEvent, 'href'> } | null {
+  const truncated = cutSeriesBefore(occ)
+  if (!truncated) return null
+  const master = occ.master
+  const slot = parseCalDate(occ.recurrenceId)! // non-null: cutSeriesBefore parsed it
+  const { rrule: editedRule, ...fields } = edits
+  const scheduleChange =
+    edits.start !== undefined || (editedRule !== undefined && (editedRule ?? undefined) !== master.rrule)
+
+  let rrule = editedRule !== undefined ? editedRule ?? undefined : master.rrule
+  if (editedRule === undefined && rrule && /(^|;)COUNT=/i.test(rrule)) {
+    rrule = adjustCount(master, rrule, slot)
+  }
+
+  const cutMs = slot.getTime()
+  const atOrAfter = (v: string) => {
+    const d = parseCalDate(v)
+    return d !== null && d.getTime() >= cutMs
+  }
+  const exdates = scheduleChange ? [] : (master.exdates ?? []).filter(atOrAfter)
+  const overrides = scheduleChange ? [] : (master.overrides ?? []).filter((o) => atOrAfter(o.recurrence_id))
+
+  const detached: Omit<CalEvent, 'href'> & { href?: string } = {
+    ...master,
+    ...fields,
+    uid: newUid,
+    etag: undefined, // a new resource has no entity tag to match against
+    rrule,
+    exdates: exdates.length ? exdates : undefined,
+    exdates_raw: undefined, // membership changed; serialize canonically
+    overrides: overrides.length ? overrides : undefined,
+  }
+  delete detached.href
+
+  if (edits.start !== undefined) {
+    // New occurrence-level times in the UI's forms; the master's raw lines
+    // describe the old values and must not resurrect them.
+    detached.start_raw = undefined
+    detached.end_raw = undefined
+  } else {
+    detached.start = occ.recurrenceId
+    detached.start_raw = master.start_raw ? `DTSTART${lineParams(master.start_raw)}:${occ.recurrenceId}` : undefined
+    const mStart = parseCalDate(master.start)
+    const mEnd = master.end ? parseCalDate(master.end) : null
+    if (master.end && mStart && mEnd) {
+      const endValue = shiftedEndValue(master, slot, mStart, mEnd)
+      detached.end = endValue
+      detached.end_raw = master.end_raw ? `DTEND${lineParams(master.end_raw)}:${endValue}` : undefined
+    }
+  }
+
+  return { truncated, detached }
+}
+
 // ── Recurrence rule editor model ─────────────────────────────────────────────
 
 export interface RecurrenceForm {

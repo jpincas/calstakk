@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { caldav } from '@/api'
-import { calendarLinkFor, parseCalDate, fmtTime } from '@/lib/dates'
+import { calendarLinkFor, fmtTime } from '@/lib/dates'
+import { expandEvent, type Occurrence } from '@/lib/recur'
 import { collectionColor } from '@/lib/colors'
 import { useCollectionStore } from '@/state/collection'
 import { Button } from '@/components/ui/button'
@@ -161,7 +162,7 @@ export function ProjectPage() {
 
   const eventBuckets = useMemo(() => {
     const today = new Date()
-    const bucketed: Record<Bucket, CalEvent[]> = {
+    const bucketed: Record<Bucket, Occurrence[]> = {
       Today: [],
       'This Week': [],
       'This Month': [],
@@ -169,21 +170,18 @@ export function ProjectPage() {
       Later: [],
     }
 
-    const sorted = [...events].sort((a, b) => {
-      const da = parseCalDate(a.start)
-      const db = parseCalDate(b.start)
-      if (!da && !db) return 0
-      if (!da) return 1
-      if (!db) return -1
-      return da.getTime() - db.getTime()
-    })
+    // Recurring series are expanded over a bounded horizon so "Later" shows
+    // at least a month past "Next Month"; one-off events beyond the horizon
+    // still appear (expandEvent emits non-recurring events unconditionally).
+    const horizon = addMonths(startOfDay(today), 3)
+    const occurrences = events
+      .flatMap((e) => expandEvent(e, startOfDay(today), horizon))
+      .sort((a, b) => a.start.getTime() - b.start.getTime())
 
-    for (const event of sorted) {
-      const start = parseCalDate(event.start)
-      if (!start) continue
-      const bucket = getEventBucket(start, today)
+    for (const occ of occurrences) {
+      const bucket = getEventBucket(occ.start, today)
       if (!bucket) continue
-      bucketed[bucket].push(event)
+      bucketed[bucket].push(occ)
     }
 
     return BUCKET_ORDER.filter((b) => bucketed[b].length > 0).map((b) => ({
@@ -357,27 +355,25 @@ export function ProjectPage() {
               >
                 {label}
               </div>
-              {bucketEvents.map((event) => {
-                const start = parseCalDate(event.start)
-                const end = event.end ? parseCalDate(event.end) : null
-                const timeStr = event.all_day
-                  ? 'All day'
-                  : start ? `${fmtTime(start)}${end ? ` – ${fmtTime(end)}` : ''}` : null
-                const dayNum = start ? format(start, 'd') : ''
-                const monthStr = start ? format(start, 'MMM').toUpperCase() : ''
+              {bucketEvents.map((occ) => {
+                const { start, end, allDay } = occ
+                const location = occ.fields.location
+                const timeStr = allDay ? 'All day' : `${fmtTime(start)} – ${fmtTime(end)}`
+                const dayNum = format(start, 'd')
+                const monthStr = format(start, 'MMM').toUpperCase()
                 return (
                   <div
-                    key={event.uid}
+                    key={`${occ.master.uid}-${occ.key}`}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: 12,
                       padding: '10px 16px',
                       borderBottom: '1px solid var(--border)',
-                      cursor: start ? 'pointer' : 'default',
+                      cursor: 'pointer',
                       transition: 'background 100ms',
                     }}
-                    onClick={start ? () => { void navigate(calendarLinkFor(start)) } : undefined}
+                    onClick={() => { void navigate(calendarLinkFor(start)) }}
                     onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--hover-bg)' }}
                     onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
                   >
@@ -415,14 +411,14 @@ export function ProjectPage() {
                           whiteSpace: 'nowrap',
                         }}
                       >
-                        {event.summary}
+                        {occ.fields.summary}
                       </p>
                       {timeStr && (
                         <p style={{ fontSize: 14, color: 'var(--muted-foreground)', margin: '2px 0 0' }}>
                           {timeStr}
                         </p>
                       )}
-                      {event.location && (
+                      {location && (
                         <p
                           style={{
                             fontSize: 14,
@@ -433,7 +429,7 @@ export function ProjectPage() {
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          {event.location}
+                          {location}
                         </p>
                       )}
                     </div>

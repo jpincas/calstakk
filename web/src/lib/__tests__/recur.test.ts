@@ -3,6 +3,7 @@ import {
   expandEvent, occurrenceKey, parseIcalDuration,
   rruleToForm, formToRrule, rruleSummary,
   applySeriesEdits, applyOccurrenceEdits, removeOccurrence, cutSeriesBefore, scheduleChanged,
+  splitSeries, hasCustomisationsFrom,
 } from '../recur'
 import { parseCalDate } from '../dates'
 import type { CalEvent } from '@/types'
@@ -211,6 +212,122 @@ describe('edit semantics', () => {
   it('degrades to a full delete when cutting at the first occurrence', () => {
     const occs = expandEvent(weekly, from, to)
     expect(cutSeriesBefore(occs[0])).toBeNull()
+  })
+})
+
+describe('splitSeries', () => {
+  const weekly: CalEvent = {
+    ...base,
+    rrule: 'FREQ=WEEKLY',
+    exdates: ['20260810T090000Z'],
+    overrides: [{ recurrence_id: '20260720T090000Z', summary: 'Moved', start: '20260720T140000Z' }],
+  }
+  const at = (e: CalEvent, rid: string) =>
+    expandEvent(e, from, parseCalDate('20260901T000000Z')!).find((o) => o.recurrenceId === rid)!
+
+  it('returns null at the first occurrence (caller edits the whole series)', () => {
+    expect(splitSeries(at(weekly, '20260706T090000Z'), { summary: 'X' }, 'uid2')).toBeNull()
+  })
+
+  it('splits on a content edit: truncated master + detached future series', () => {
+    const split = splitSeries(at(weekly, '20260713T090000Z'), { summary: 'New era' }, 'uid2')!
+    expect(split.truncated.rrule).toBe('FREQ=WEEKLY;UNTIL=20260713T085959Z')
+    expect(split.truncated.uid).toBe('ev1')
+    expect(split.truncated.overrides).toBeUndefined()
+    expect(split.truncated.exdates).toBeUndefined()
+
+    const d = split.detached
+    expect(d.uid).toBe('uid2')
+    expect(d.etag).toBeUndefined()
+    expect(d.start).toBe('20260713T090000Z')
+    expect(d.end).toBe('20260713T093000Z')
+    expect(d.summary).toBe('New era')
+    expect(d.rrule).toBe('FREQ=WEEKLY')
+    // The at/after-cut override and exdate moved across verbatim.
+    expect(d.overrides).toEqual(weekly.overrides)
+    expect(d.exdates).toEqual(['20260810T090000Z'])
+
+    const occs = expandEvent({ ...d, href: 'x' }, from, to)
+    expect(occs.map((o) => o.recurrenceId)).toEqual([
+      '20260713T090000Z', '20260720T090000Z', '20260727T090000Z',
+    ])
+    expect(occs[0].fields.summary).toBe('New era')
+    expect(occs[1].fields.summary).toBe('Moved') // override snapshot kept
+  })
+
+  it('reduces an inherited COUNT by the occurrences kept behind', () => {
+    const counted: CalEvent = { ...base, rrule: 'FREQ=WEEKLY;COUNT=10' }
+    const split = splitSeries(at(counted, '20260720T090000Z'), {}, 'uid2')!
+    expect(split.truncated.rrule).toBe('FREQ=WEEKLY;UNTIL=20260720T085959Z')
+    expect(split.detached.rrule).toBe('FREQ=WEEKLY;COUNT=8')
+  })
+
+  it('keeps an inherited UNTIL as-is', () => {
+    const until: CalEvent = { ...base, rrule: 'FREQ=WEEKLY;UNTIL=20261001T000000Z' }
+    const split = splitSeries(at(until, '20260720T090000Z'), {}, 'uid2')!
+    expect(split.detached.rrule).toBe('FREQ=WEEKLY;UNTIL=20261001T000000Z')
+  })
+
+  it('resets carried overrides/exdates and drops raw times on a time edit', () => {
+    const split = splitSeries(
+      at(weekly, '20260713T090000Z'),
+      { start: '20260713T100000Z', end: '20260713T110000Z' },
+      'uid2',
+    )!
+    const d = split.detached
+    expect(d.start).toBe('20260713T100000Z')
+    expect(d.end).toBe('20260713T110000Z')
+    expect(d.overrides).toBeUndefined()
+    expect(d.exdates).toBeUndefined()
+    expect(d.start_raw).toBeUndefined()
+    expect(d.end_raw).toBeUndefined()
+  })
+
+  it('rebases param-carrying raw DTSTART/DTEND lines onto the slot', () => {
+    const tzid: CalEvent = {
+      ...base,
+      start: '20260706T090000',
+      end: '20260706T093000',
+      start_raw: 'DTSTART;TZID=Europe/Madrid:20260706T090000',
+      end_raw: 'DTEND;TZID=Europe/Madrid:20260706T093000',
+      rrule: 'FREQ=WEEKLY',
+      vtimezones_raw: ['BEGIN:VTIMEZONE\nTZID:Europe/Madrid\nEND:VTIMEZONE'],
+    }
+    const split = splitSeries(at(tzid, '20260713T090000'), { summary: 'X' }, 'uid2')!
+    expect(split.detached.start).toBe('20260713T090000')
+    expect(split.detached.start_raw).toBe('DTSTART;TZID=Europe/Madrid:20260713T090000')
+    expect(split.detached.end).toBe('20260713T093000')
+    expect(split.detached.end_raw).toBe('DTEND;TZID=Europe/Madrid:20260713T093000')
+    expect(split.detached.vtimezones_raw).toEqual(tzid.vtimezones_raw)
+  })
+
+  it('rebases all-day series by calendar days', () => {
+    const allDay: CalEvent = {
+      uid: 'a', summary: 'Away', start: '20260706', end: '20260708', all_day: true,
+      rrule: 'FREQ=WEEKLY', href: 'x',
+    }
+    const split = splitSeries(at(allDay, '20260720'), { summary: 'Trip' }, 'uid2')!
+    expect(split.truncated.rrule).toBe('FREQ=WEEKLY;UNTIL=20260719')
+    expect(split.detached.start).toBe('20260720')
+    expect(split.detached.end).toBe('20260722')
+  })
+})
+
+describe('hasCustomisationsFrom', () => {
+  const weekly: CalEvent = {
+    ...base,
+    rrule: 'FREQ=WEEKLY',
+    exdates: ['20260810T090000Z'],
+    overrides: [{ recurrence_id: '20260720T090000Z', summary: 'Moved' }],
+  }
+  const wide = parseCalDate('20260901T000000Z')!
+
+  it('sees overrides and exdates at or after the slot, not before it', () => {
+    const occs = expandEvent(weekly, from, wide)
+    const early = occs.find((o) => o.recurrenceId === '20260713T090000Z')!
+    const late = occs.find((o) => o.recurrenceId === '20260817T090000Z')!
+    expect(hasCustomisationsFrom(early)).toBe(true) // 20 Jul override, 10 Aug exdate ahead
+    expect(hasCustomisationsFrom(late)).toBe(false) // both behind
   })
 })
 

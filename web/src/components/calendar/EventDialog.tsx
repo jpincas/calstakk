@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { collectionColor } from '@/lib/colors'
 import {
-  rruleToForm, formToRrule, toICalString, shiftSeries, scheduleChanged,
+  rruleToForm, formToRrule, toICalString, shiftSeries, scheduleChanged, hasCustomisationsFrom,
   type Occurrence, type RecurrenceForm, type SeriesEdits,
 } from '@/lib/recur'
 import type { Collection, EventFields } from '@/types'
@@ -152,12 +152,13 @@ export function EventDialog({
     | null
     | { kind: 'save-scope' }
     | { kind: 'delete-scope' }
-    | { kind: 'reset-warning'; edits: SeriesEdits }
+    | { kind: 'reset-warning'; edits: SeriesEdits; scope: 'all' | 'future' }
   >(null)
   const descRef = useRef<HTMLTextAreaElement>(null)
   const mutations = useEventMutations()
   const pending =
     mutations.create.isPending || mutations.saveSeries.isPending || mutations.saveOccurrence.isPending ||
+    mutations.saveFuture.isPending ||
     mutations.deleteSeries.isPending || mutations.deleteOccurrence.isPending || mutations.deleteFuture.isPending
 
   const names = collections.map((c) => c.ref)
@@ -234,10 +235,21 @@ export function EventDialog({
   const finishSeriesSave = (edits: SeriesEdits) => {
     const master = occurrence!.master
     if (scheduleChanged(master, edits) && ((master.overrides?.length ?? 0) > 0 || (master.exdates?.length ?? 0) > 0)) {
-      setScopeAsk({ kind: 'reset-warning', edits })
+      setScopeAsk({ kind: 'reset-warning', edits, scope: 'all' })
       return
     }
     mutations.saveSeries.mutate({ col: colRef, master, edits }, { onSuccess: onClose })
+  }
+
+  const finishFutureSave = (edits: SeriesEdits) => {
+    const occ = occurrence!
+    // A schedule change resets the skipped/edited occurrences the new series
+    // would otherwise inherit — same warning as the whole-series case.
+    if ((edits.start !== undefined || edits.rrule !== undefined) && hasCustomisationsFrom(occ)) {
+      setScopeAsk({ kind: 'reset-warning', edits, scope: 'future' })
+      return
+    }
+    mutations.saveFuture.mutate({ col: colRef, occ, edits }, { onSuccess: onClose })
   }
 
   const seriesEdits = (): SeriesEdits => {
@@ -258,6 +270,20 @@ export function EventDialog({
     end: toICalString(endDT!, form.allDay),
     all_day: form.allDay || undefined,
   })
+
+  // This-and-future edits: content diffs plus, when touched, occurrence-level
+  // times — the new series starts at the edited occurrence (see splitSeries),
+  // so no delta-shift back to the master is involved.
+  const futureEdits = (): SeriesEdits => {
+    const edits: SeriesEdits = { ...contentEdits() }
+    if (ruleChanged) edits.rrule = currentRrule
+    if (timesChanged && startDT && endDT) {
+      edits.start = toICalString(startDT, form.allDay)
+      edits.end = toICalString(endDT, form.allDay)
+      edits.all_day = form.allDay || undefined
+    }
+    return edits
+  }
 
   const handleSave = () => {
     if (!canSave || !startDT || !endDT) return
@@ -300,12 +326,18 @@ export function EventDialog({
     const ask = scopeAsk
     setScopeAsk(null)
     if (ask?.kind === 'reset-warning') {
-      mutations.saveSeries.mutate({ col: colRef, master: occ.master, edits: ask.edits }, { onSuccess: onClose })
+      if (ask.scope === 'future') {
+        mutations.saveFuture.mutate({ col: colRef, occ, edits: ask.edits }, { onSuccess: onClose })
+      } else {
+        mutations.saveSeries.mutate({ col: colRef, master: occ.master, edits: ask.edits }, { onSuccess: onClose })
+      }
       return
     }
     if (ask?.kind === 'save-scope') {
       if (scope === 'this') {
         mutations.saveOccurrence.mutate({ col: colRef, occ, edits: occurrenceEdits() }, { onSuccess: onClose })
+      } else if (scope === 'future') {
+        finishFutureSave(futureEdits())
       } else {
         finishSeriesSave(seriesEdits())
       }
@@ -724,12 +756,15 @@ export function EventDialog({
           accent={accent.bg}
           title={
             scopeAsk?.kind === 'delete-scope' ? 'Delete recurring event'
-            : scopeAsk?.kind === 'reset-warning' ? 'Change the whole series?'
+            : scopeAsk?.kind === 'reset-warning'
+            ? (scopeAsk.scope === 'future' ? 'Change this and future events?' : 'Change the whole series?')
             : 'Save recurring event'
           }
           warning={
             scopeAsk?.kind === 'reset-warning'
-              ? 'Changing the schedule resets skipped and edited occurrences of this series.'
+              ? scopeAsk.scope === 'future'
+                ? 'Changing the schedule resets skipped and edited occurrences from this event onward.'
+                : 'Changing the schedule resets skipped and edited occurrences of this series.'
               : undefined
           }
           options={
@@ -740,9 +775,12 @@ export function EventDialog({
                   { value: 'all', label: 'All events', hint: 'The entire series is deleted.' },
                 ]
               : scopeAsk?.kind === 'reset-warning'
-              ? [{ value: 'all', label: 'Change all events', hint: 'Skipped and edited occurrences are reset.' }]
+              ? scopeAsk.scope === 'future'
+                ? [{ value: 'future', label: 'Change this and future events', hint: 'Skipped and edited occurrences from here on are reset.' }]
+                : [{ value: 'all', label: 'Change all events', hint: 'Skipped and edited occurrences are reset.' }]
               : [
                   { value: 'this', label: 'This event', hint: 'Only this occurrence changes.' },
+                  { value: 'future', label: 'This and future events', hint: 'This occurrence and every later one change.' },
                   { value: 'all', label: 'All events', hint: 'Every occurrence in the series changes.' },
                 ]
           }

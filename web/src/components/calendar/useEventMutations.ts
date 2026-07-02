@@ -3,7 +3,7 @@ import { toast } from 'sonner'
 import { caldav } from '@/api'
 import type { CalEvent, EventFields } from '@/types'
 import {
-  applySeriesEdits, applyOccurrenceEdits, removeOccurrence, cutSeriesBefore,
+  applySeriesEdits, applyOccurrenceEdits, removeOccurrence, cutSeriesBefore, splitSeries,
   type Occurrence, type SeriesEdits,
 } from '@/lib/recur'
 
@@ -43,6 +43,27 @@ export function useEventMutations() {
     onError: fail,
   })
 
+  /**
+   * Edit this and all future occurrences: split the series into a new resource
+   * carrying the future portion plus the edits, then truncate the old master
+   * with UNTIL. The create runs first so a failure between the two PUTs can't
+   * lose the series (at worst the future portion briefly exists twice).
+   * At the first occurrence the split degenerates to a whole-series edit.
+   */
+  const saveFuture = useMutation({
+    mutationFn: async ({ col, occ, edits }: { col: string; occ: Occurrence; edits: SeriesEdits }) => {
+      const split = splitSeries(occ, edits, crypto.randomUUID())
+      if (!split) {
+        await caldav.updateEvent(col, applySeriesEdits(occ.master, edits))
+        return
+      }
+      await caldav.createEvent(col, split.detached)
+      await caldav.updateEvent(col, split.truncated)
+    },
+    onSuccess: (_, { col }) => done(col, 'This and future events saved'),
+    onError: fail,
+  })
+
   /** Delete one occurrence: EXDATEs its slot and drops any override there. */
   const deleteOccurrence = useMutation({
     mutationFn: ({ col, occ }: { col: string; occ: Occurrence }) =>
@@ -69,5 +90,5 @@ export function useEventMutations() {
     onError: fail,
   })
 
-  return { create, saveSeries, saveOccurrence, deleteOccurrence, deleteFuture, deleteSeries }
+  return { create, saveSeries, saveOccurrence, saveFuture, deleteOccurrence, deleteFuture, deleteSeries }
 }
