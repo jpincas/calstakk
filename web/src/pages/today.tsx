@@ -68,7 +68,7 @@ export function TodayPage() {
   const qc  = useQueryClient()
   const navigate = useNavigate()
   const now = new Date()
-  const todayLabel = format(now, 'EEEE, MMMM d')
+  const todayLabel = format(now, 'EEEE d MMMM')
 
   // ── Responsive ───────────────────────────────────────────────────────────────
   const containerRef = useRef<HTMLDivElement>(null)

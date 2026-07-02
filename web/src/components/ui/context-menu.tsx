@@ -100,6 +100,15 @@ function ContextMenuSubContent({ children, ...props }: React.ComponentProps<type
   )
 }
 
+function ContextMenuSeparator(props: React.ComponentProps<typeof ContextMenuPrimitive.Separator>) {
+  return (
+    <ContextMenuPrimitive.Separator
+      {...props}
+      style={{ height: 1, margin: '4px -4px', background: 'var(--border)', ...props.style }}
+    />
+  )
+}
+
 export {
   ContextMenu,
   ContextMenuTrigger,
@@ -108,4 +117,5 @@ export {
   ContextMenuSub,
   ContextMenuSubTrigger,
   ContextMenuSubContent,
+  ContextMenuSeparator,
 }

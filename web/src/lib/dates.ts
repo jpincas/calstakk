@@ -105,6 +105,11 @@ export function calendarLinkFor(start: Date): string {
   return `/calendar?date=${format(start, 'yyyy-MM-dd')}&view=${view}`
 }
 
+/** Format a Date as an iCal DATE value (YYYYMMDD), for writing to a Todo's `due` field. */
+export function toIcalDate(d: Date): string {
+  return format(d, 'yyyyMMdd')
+}
+
 export function isOverdue(due: string | undefined): boolean {
   if (!due) return false
   const d = parseCalDate(due)

@@ -4,18 +4,18 @@
  */
 
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
-import { isBefore, isToday, startOfDay } from 'date-fns'
+import { isBefore, isToday, startOfDay, addDays } from 'date-fns'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { caldav } from '@/api'
-import { parseCalDate, fmtDateShort } from '@/lib/dates'
+import { parseCalDate, fmtDateShort, toIcalDate } from '@/lib/dates'
 import { toast } from 'sonner'
 import {
-  CheckCircle2, Circle, ChevronDown, ChevronUp, Plus, Trash2, Check, X, Sun,
+  CheckCircle2, Circle, ChevronDown, ChevronUp, Plus, Trash2, Check, X, Sun, CalendarClock,
 } from 'lucide-react'
 import { TodoEditPanel } from '@/components/TodoEditPanel'
 import {
   ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem,
-  ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent,
+  ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent, ContextMenuSeparator,
 } from '@/components/ui/context-menu'
 import {
   DragOverlay, useDndMonitor,
@@ -183,15 +183,25 @@ interface TaskContextMenuProps {
   collections: Collection[]
   currentCollection: string
   onMove: (targetCollection: string) => void
+  onSetDue: (due: string) => void
 }
 
-function TaskContextMenu({ children, collections, currentCollection, onMove }: TaskContextMenuProps) {
+function TaskContextMenu({ children, collections, currentCollection, onMove, onSetDue }: TaskContextMenuProps) {
   // Move targets must be writable — moving into a read-only shared collection would 403.
   const targets = collections.filter((c) => c.ref !== currentCollection && c.ref !== 'inbox' && c.myAccess !== 'read')
   return (
     <ContextMenu>
       <ContextMenuTrigger style={{ display: 'block' }}>{children}</ContextMenuTrigger>
       <ContextMenuContent>
+        <ContextMenuItem onSelect={() => onSetDue(toIcalDate(new Date()))}>
+          <CalendarClock style={{ width: 13, height: 13, flexShrink: 0, opacity: 0.7 }} />
+          Due today
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => onSetDue(toIcalDate(addDays(new Date(), 1)))}>
+          <CalendarClock style={{ width: 13, height: 13, flexShrink: 0, opacity: 0.7 }} />
+          Due tomorrow
+        </ContextMenuItem>
+        <ContextMenuSeparator />
         <ContextMenuSub>
           <ContextMenuSubTrigger>Move to</ContextMenuSubTrigger>
           <ContextMenuSubContent>
@@ -490,6 +500,12 @@ export function TaskList({ collection, accentColor, readOnly = false }: TaskList
     onError: (e) => toast.error(String(e)),
   })
 
+  const setDue = useMutation({
+    mutationFn: ({ todo, due }: { todo: Todo; due: string }) => caldav.updateTodo(collection, { ...todo, due }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['todos', collection] }),
+    onError: (e) => toast.error(String(e)),
+  })
+
   /** Used for all drag-related writes (x_sort_order and/or section_id). */
   const dragUpdate = useMutation({
     mutationFn: (todo: Todo) => caldav.updateTodo(collection, todo),
@@ -753,7 +769,12 @@ export function TaskList({ collection, accentColor, readOnly = false }: TaskList
         // The only context-menu entry ("Move to") mutates — skip the menu entirely.
         <SortableTodoRow {...rowProps(todo)} containerId={containerId} />
       ) : (
-        <TaskContextMenu collections={collections} currentCollection={collection} onMove={(to) => moveTodo.mutate({ todo, to })}>
+        <TaskContextMenu
+          collections={collections}
+          currentCollection={collection}
+          onMove={(to) => moveTodo.mutate({ todo, to })}
+          onSetDue={(due) => setDue.mutate({ todo, due })}
+        >
           <SortableTodoRow {...rowProps(todo)} containerId={containerId} />
         </TaskContextMenu>
       )}
@@ -934,7 +955,12 @@ export function TaskList({ collection, accentColor, readOnly = false }: TaskList
                   {readOnly ? (
                     <TodoRow {...rowProps(t)} />
                   ) : (
-                    <TaskContextMenu collections={collections} currentCollection={collection} onMove={(to) => moveTodo.mutate({ todo: t, to })}>
+                    <TaskContextMenu
+                      collections={collections}
+                      currentCollection={collection}
+                      onMove={(to) => moveTodo.mutate({ todo: t, to })}
+                      onSetDue={(due) => setDue.mutate({ todo: t, due })}
+                    >
                       <TodoRow {...rowProps(t)} />
                     </TaskContextMenu>
                   )}
