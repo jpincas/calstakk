@@ -51,12 +51,22 @@ export function nsHref(el: Element, ns: string, local: string): string {
   return parent?.getElementsByTagNameNS(DAV_NS, 'href')[0]?.textContent?.trim() ?? ''
 }
 
-/** Extract calendar-data text from all multistatus response elements. */
-export function extractCalendarData(xml: string): string[] {
+export interface CalendarDataItem {
+  ics: string
+  etag?: string
+}
+
+/** Extract calendar-data (with its sibling getetag) from all multistatus response elements. */
+export function extractCalendarData(xml: string): CalendarDataItem[] {
   const doc = new DOMParser().parseFromString(xml, 'application/xml')
-  return Array.from(doc.getElementsByTagNameNS(CALDAV_NS, 'calendar-data'))
-    .map(el => el.textContent ?? '')
-    .filter(Boolean)
+  const items: CalendarDataItem[] = []
+  for (const resp of Array.from(doc.getElementsByTagNameNS(DAV_NS, 'response'))) {
+    const ics = resp.getElementsByTagNameNS(CALDAV_NS, 'calendar-data')[0]?.textContent ?? ''
+    if (!ics) continue
+    const etag = resp.getElementsByTagNameNS(DAV_NS, 'getetag')[0]?.textContent?.trim() || undefined
+    items.push({ ics, etag })
+  }
+  return items
 }
 
 export function calQueryBody(compName: string, fromISO?: string, toISO?: string): string {

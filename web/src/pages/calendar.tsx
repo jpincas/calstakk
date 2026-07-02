@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useQuery, useQueries } from '@tanstack/react-query'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Calendar as BigCalendar, dateFnsLocalizer, type View } from 'react-big-calendar'
 import RBCDragAndDropAddon, { type EventInteractionArgs } from 'react-big-calendar/lib/addons/dragAndDrop'
 
@@ -12,21 +12,19 @@ const withDragAndDrop = (
 )
 import { format, parse, startOfWeek, getDay, startOfMonth, endOfMonth, addMonths, subMonths } from 'date-fns'
 import { enUS } from 'date-fns/locale'
-import { RRule } from 'rrule'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
 import { caldav } from '@/api'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { toast } from 'sonner'
 import { collectionColor } from '@/lib/colors'
 import { parseCalDate, fmtTime } from '@/lib/dates'
-import { ChevronLeft, ChevronRight, Plus, CalendarDays } from 'lucide-react'
+import { expandEvent, shiftSeries, toICalString, type Occurrence } from '@/lib/recur'
+import { EventDialog } from '@/components/calendar/EventDialog'
+import { ScopeDialog, type EditScope } from '@/components/calendar/ScopeDialog'
+import { useEventMutations } from '@/components/calendar/useEventMutations'
+import { CheckCircle2, ChevronLeft, ChevronRight, Plus, CalendarDays } from 'lucide-react'
 import { PageBar } from '@/components/layout/PageBar'
 import { useCollectionStore } from '@/state/collection'
-import type { CalEvent, Collection } from '@/types'
+import type { CalEvent, Collection, Todo } from '@/types'
 
 const localizer = dateFnsLocalizer({
   format, parse,
@@ -35,9 +33,9 @@ const localizer = dateFnsLocalizer({
   locales: { 'en-US': enUS },
 })
 
-function toUTCDate(d: Date): Date {
-  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
-}
+type RBCResource =
+  | { kind: 'event'; occ: Occurrence; _colName: string }
+  | ({ kind: 'todo' } & Todo & { _colName: string })
 
 type RBCEvent = {
   id: string
@@ -45,60 +43,47 @@ type RBCEvent = {
   start: Date
   end: Date
   allDay: boolean
-  resource: CalEvent & { _colName: string }
+  resource: RBCResource
 }
 
 const DnDCalendar = withDragAndDrop<RBCEvent, object>(BigCalendar)
-
-function expandRecurring(e: CalEvent, colName: string, rangeStart: Date, rangeEnd: Date): RBCEvent[] {
-  if (!e.rrule) return []
-  const dtstart = parseCalDate(e.start)
-  if (!dtstart) return []
-  const isAllDay = !!e.all_day
-  const rruleStart = isAllDay ? toUTCDate(dtstart) : dtstart
-  let rule: RRule
-  try { rule = new RRule({ ...RRule.parseString(e.rrule), dtstart: rruleStart }) } catch { return [] }
-  const endDtstart = e.end ? parseCalDate(e.end) : null
-  const duration = endDtstart ? Math.abs(endDtstart.getTime() - dtstart.getTime()) : 24 * 60 * 60 * 1000
-  const queryStart = isAllDay ? toUTCDate(rangeStart) : new Date(rangeStart.getTime() - duration)
-  const queryEnd = isAllDay ? toUTCDate(rangeEnd) : rangeEnd
-  const occurrences = rule.between(queryStart, queryEnd, true)
-  return occurrences.map((occ) => {
-    const occLocal = isAllDay ? new Date(occ.getUTCFullYear(), occ.getUTCMonth(), occ.getUTCDate()) : occ
-    return {
-      id: `${e.uid}-${occ.toISOString()}`,
-      title: e.summary,
-      start: occLocal,
-      end: new Date(occLocal.getTime() + duration),
-      allDay: isAllDay,
-      resource: { ...e, _colName: colName },
-    }
-  })
-}
 
 const VIEW_LABELS: Record<View, string> = {
   month: 'Month', week: 'Week', day: 'Day', agenda: 'Agenda', work_week: 'Work week',
 }
 
-interface EventForm {
-  uid: string
-  summary: string
-  start: string
-  end: string
-  description: string
-  location: string
-  href: string
-  _colName: string
+/** Everything the event dialog needs to open: what's being edited (or a create prefill). */
+interface DialogState {
+  occ: Occurrence | null
+  col: string
+  range?: { start: Date; end: Date; allDay: boolean }
 }
 
-const emptyForm = (uid: string, colName: string): EventForm => ({
-  uid, summary: '', start: '', end: '', description: '', location: '', href: '', _colName: colName,
-})
+/** A pending drag/resize of a recurring occurrence, awaiting its scope choice. */
+interface PendingMove {
+  occ: Occurrence
+  col: string
+  start: Date
+  end: Date
+}
+
+// Link-throughs land on /calendar?date=yyyy-MM-dd&view=day|week|month.
+function viewParamOf(params: URLSearchParams): View | null {
+  const v = params.get('view')
+  return v === 'day' || v === 'week' || v === 'month' ? v : null
+}
+
+function dateParamOf(params: URLSearchParams): Date | null {
+  const s = params.get('date')
+  if (!s) return null
+  const d = parse(s, 'yyyy-MM-dd', new Date())
+  return isNaN(d.getTime()) ? null : d
+}
 
 export function CalendarPage() {
   const { collection: collectionParam } = useParams<{ collection?: string }>()
-  const { activeCollection, hiddenCollections, focusedCollection } = useCollectionStore()
-  const qc = useQueryClient()
+  const { activeCollection, hiddenCollections, focusedCollection, showTasksOnCalendar, toggleShowTasksOnCalendar } = useCollectionStore()
+  const navigateTo = useNavigate()
   const isMulti = !collectionParam
 
   const { data: collections = [] } = useQuery({
@@ -106,32 +91,69 @@ export function CalendarPage() {
     queryFn: () => caldav.listCollections(),
   })
 
-  const names = collections.map((c: Collection) => c.name)
+  const names = collections.map((c: Collection) => c.ref)
 
-  const defaultCol = collectionParam ?? activeCollection ?? collections[0]?.name ?? ''
+  // Read-only shared collections: their events must not be dragged/resized/edited.
+  const readOnlyRefs = new Set(
+    collections.filter((c: Collection) => c.myAccess === 'read').map((c: Collection) => c.ref)
+  )
+
+  // New events must target a writable collection; fall back to the first writable one.
+  const preferredCol = collectionParam ?? activeCollection ?? collections[0]?.ref ?? ''
+  const defaultCol = preferredCol && !readOnlyRefs.has(preferredCol)
+    ? preferredCol
+    : collections.find((c: Collection) => c.myAccess !== 'read')?.ref ?? ''
+
+  // Hide "New event" when there is no writable creation target — e.g. the
+  // single-collection view of a read-only share (falling back to another
+  // collection there would create the event somewhere unexpected).
+  const canCreate = isMulti ? defaultCol !== '' : !!collectionParam && !readOnlyRefs.has(collectionParam)
 
   const visibleCollections: Collection[] = isMulti
     ? (focusedCollection
-        ? collections.filter((c: Collection) => c.name === focusedCollection)
-        : collections.filter((c: Collection) => c.name !== 'inbox' && !hiddenCollections.includes(c.name)))
-    : collections.filter((c: Collection) => c.name === collectionParam)
+        ? collections.filter((c: Collection) => c.ref === focusedCollection)
+        : collections.filter((c: Collection) => c.ref !== 'capture' && !hiddenCollections.includes(c.ref)))
+    : collections.filter((c: Collection) => c.ref === collectionParam)
+
+  // Tasks additionally come from the inbox (it holds todos, never events).
+  const todoCollections: Collection[] = isMulti
+    ? (focusedCollection
+        ? collections.filter((c: Collection) => c.ref === focusedCollection)
+        : collections.filter((c: Collection) => !hiddenCollections.includes(c.ref)))
+    : collections.filter((c: Collection) => c.ref === collectionParam)
 
   const accentColor = collectionParam
     ? collectionColor(names, collectionParam)
     : { bg: '#6366F1', text: '#fff', light: '#eef2ff', border: '#a5b4fc', muted: '#c7d2fe' }
 
-  const [view, setView] = useState<View>('month')
-  const [date, setDate] = useState(new Date())
-  const [form, setForm] = useState<EventForm | null>(null)
-  const [isNew, setIsNew] = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [view, setView] = useState<View>(() => viewParamOf(searchParams) ?? 'month')
+  const [date, setDate] = useState<Date>(() => dateParamOf(searchParams) ?? new Date())
+  const [dialog, setDialog] = useState<DialogState | null>(null)
+  const [pendingMove, setPendingMove] = useState<PendingMove | null>(null)
+
+  // The params are a one-shot navigation intent, consumed by the lazy state
+  // initialisers above (the page remounts on every link-through). Drop them
+  // so refresh/back doesn't re-apply a stale jump.
+  useEffect(() => {
+    if (searchParams.toString() === '') return
+    setSearchParams({}, { replace: true })
+  }, [searchParams, setSearchParams])
 
   const rangeStart = subMonths(startOfMonth(date), 1)
   const rangeEnd = addMonths(endOfMonth(date), 1)
 
   const eventQueries = useQueries({
     queries: visibleCollections.map((c: Collection) => ({
-      queryKey: ['events', c.name],
-      queryFn: () => caldav.listEvents(c.name),
+      queryKey: ['events', c.ref],
+      queryFn: () => caldav.listEvents(c.ref),
+    })),
+  })
+
+  const todoQueries = useQueries({
+    queries: todoCollections.map((c: Collection) => ({
+      queryKey: ['todos', c.ref],
+      queryFn: () => caldav.listTodos(c.ref),
     })),
   })
 
@@ -139,78 +161,92 @@ export function CalendarPage() {
 
   const bigCalEvents: RBCEvent[] = visibleCollections.flatMap((col: Collection, i: number) => {
     const events: CalEvent[] = eventQueries[i]?.data ?? []
-    return events.flatMap((e: CalEvent) => {
-      if (e.rrule) return expandRecurring(e, col.name, rangeStart, rangeEnd)
-      const start = parseCalDate(e.start)
-      if (!start) return []
-      const end = e.end
-        ? (parseCalDate(e.end) ?? new Date(start.getTime() + 24 * 60 * 60 * 1000))
-        : new Date(start.getTime() + (e.all_day ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000))
-      return [{ id: e.uid, title: e.summary, start, end, allDay: !!e.all_day, resource: { ...e, _colName: col.name } }]
-    })
+    return events.flatMap((e: CalEvent) =>
+      expandEvent(e, rangeStart, rangeEnd).map((occ) => ({
+        id: `${e.uid}-${occ.key}`,
+        title: occ.fields.summary,
+        start: occ.start,
+        end: occ.end,
+        allDay: occ.allDay,
+        resource: { kind: 'event' as const, occ, _colName: col.ref },
+      })),
+    )
   })
 
-  const save = useMutation({
-    mutationFn: async (f: EventForm) => {
-      const col = f._colName || defaultCol
-      if (!col) throw new Error('No collection selected')
-      const event = {
-        uid: f.uid,
-        summary: f.summary,
-        start: f.start || new Date().toISOString(),
-        end: f.end || undefined,
-        description: f.description || undefined,
-        location: f.location || undefined,
-        href: f.href,
-      }
-      if (isNew) {
-        await caldav.createEvent(col, event)
-      } else {
-        await caldav.updateEvent(col, event)
-      }
-    },
-    onSuccess: (_, f) => {
-      void qc.invalidateQueries({ queryKey: ['events', f._colName || defaultCol] })
-      setForm(null)
-      toast.success(isNew ? 'Event created' : 'Event saved')
-    },
-    onError: (e) => toast.error(String(e)),
-  })
+  const taskEvents: RBCEvent[] = showTasksOnCalendar
+    ? todoCollections.flatMap((col: Collection, i: number) => {
+        const todos: Todo[] = todoQueries[i]?.data ?? []
+        return todos.flatMap((t: Todo) => {
+          if (!t.due || t.status === 'COMPLETED' || t.status === 'CANCELLED') return []
+          const due = parseCalDate(t.due)
+          if (!due) return []
+          const isAllDay = t.due.length === 8 // date-only DUE
+          const start = isAllDay ? due : new Date(due.getTime() - 30 * 60 * 1000)
+          const end = isAllDay ? new Date(due.getTime() + 24 * 60 * 60 * 1000) : due
+          return [{
+            id: `todo-${col.ref}-${t.uid}`,
+            title: t.summary,
+            start,
+            end,
+            allDay: isAllDay,
+            resource: { kind: 'todo' as const, ...t, _colName: col.ref },
+          }]
+        })
+      })
+    : []
 
-  const del = useMutation({
-    mutationFn: (f: EventForm) => caldav.deleteEvent(f._colName || defaultCol, f.uid),
-    onSuccess: (_, f) => {
-      void qc.invalidateQueries({ queryKey: ['events', f._colName || defaultCol] })
-      setForm(null)
-      toast.success('Event deleted')
-    },
-    onError: (e) => toast.error(String(e)),
-  })
+  const mutations = useEventMutations()
 
-  const reschedule = useMutation({
-    mutationFn: ({ ev, start, end }: { ev: CalEvent & { _colName: string }; start: Date; end: Date }) =>
-      caldav.updateEvent(ev._colName, {
-        uid: ev.uid,
-        summary: ev.summary,
-        start: start.toISOString(),
-        end: end.toISOString(),
-        description: ev.description,
-        location: ev.location,
-      }),
-    onSuccess: (_, { ev }) => {
-      void qc.invalidateQueries({ queryKey: ['events', ev._colName] })
-      toast.success('Event rescheduled')
-    },
-    onError: (e) => toast.error(String(e)),
-  })
-
-  const handleEventDrop = ({ event, start, end }: EventInteractionArgs<RBCEvent>) => {
-    reschedule.mutate({ ev: event.resource, start: new Date(start), end: new Date(end) })
+  // Drag/resize: plain events reschedule directly (full event preserved); a
+  // recurring occurrence first asks for its scope (this event / all events).
+  const handleMove = ({ event, start, end }: EventInteractionArgs<RBCEvent>) => {
+    if (event.resource.kind !== 'event') return
+    const { occ, _colName } = event.resource
+    if (readOnlyRefs.has(_colName)) return // server would 403
+    const startD = new Date(start)
+    const endD = new Date(end)
+    if (!occ.isRecurring) {
+      mutations.saveSeries.mutate({
+        col: _colName,
+        master: occ.master,
+        edits: {
+          start: toICalString(startD, occ.allDay),
+          end: toICalString(endD, occ.allDay),
+          all_day: occ.allDay,
+        },
+      })
+      return
+    }
+    setPendingMove({ occ, col: _colName, start: startD, end: endD })
   }
 
-  const handleEventResize = ({ event, start, end }: EventInteractionArgs<RBCEvent>) => {
-    reschedule.mutate({ ev: event.resource, start: new Date(start), end: new Date(end) })
+  const handleMoveScope = (scope: EditScope) => {
+    const m = pendingMove
+    setPendingMove(null)
+    if (!m) return
+    if (scope === 'this') {
+      mutations.saveOccurrence.mutate({
+        col: m.col,
+        occ: m.occ,
+        edits: {
+          start: toICalString(m.start, m.occ.allDay),
+          end: toICalString(m.end, m.occ.allDay),
+          all_day: m.occ.allDay || undefined,
+        },
+      })
+    } else {
+      const delta = m.start.getTime() - m.occ.start.getTime()
+      const duration = m.end.getTime() - m.start.getTime()
+      mutations.saveSeries.mutate({
+        col: m.col,
+        master: m.occ.master,
+        edits: shiftSeries(m.occ.master, delta, duration, m.occ.allDay),
+      })
+    }
   }
+
+  const moveResetsOverrides = !!pendingMove &&
+    ((pendingMove.occ.master.overrides?.length ?? 0) > 0 || (pendingMove.occ.master.exdates?.length ?? 0) > 0)
 
   const viewLabel =
     view === 'month'
@@ -273,6 +309,22 @@ export function CalendarPage() {
         }
         controls={
           <>
+            <button
+              onClick={toggleShowTasksOnCalendar}
+              title={showTasksOnCalendar ? 'Hide tasks on the calendar' : 'Show tasks on the calendar'}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '4px 10px', borderRadius: 7,
+                border: '1px solid var(--border)',
+                background: showTasksOnCalendar ? accentColor.bg : 'transparent',
+                color: showTasksOnCalendar ? '#fff' : 'var(--muted-foreground)',
+                fontSize: 16, fontWeight: 500, cursor: 'pointer',
+                transition: 'background 100ms, color 100ms',
+              }}
+            >
+              <CheckCircle2 style={{ width: 13, height: 13 }} />
+              Show tasks
+            </button>
             <div style={{ display: 'flex', borderRadius: 7, border: '1px solid var(--border)', overflow: 'hidden' }}>
               {(['month', 'week', 'day'] as View[]).map((v, i, arr) => (
                 <button
@@ -284,18 +336,20 @@ export function CalendarPage() {
                 </button>
               ))}
             </div>
-            <button
-              onClick={() => { setForm(emptyForm(crypto.randomUUID(), defaultCol)); setIsNew(true) }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 5,
-                padding: '5px 10px', borderRadius: 7, border: 'none',
-                background: accentColor.bg, color: '#fff',
-                fontSize: 16, fontWeight: 600, cursor: 'pointer',
-              }}
-            >
-              <Plus style={{ width: 13, height: 13 }} />
-              New event
-            </button>
+            {canCreate && (
+              <button
+                onClick={() => setDialog({ occ: null, col: defaultCol })}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 5,
+                  padding: '5px 10px', borderRadius: 7, border: 'none',
+                  background: accentColor.bg, color: '#fff',
+                  fontSize: 16, fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                <Plus style={{ width: 13, height: 13 }} />
+                New event
+              </button>
+            )}
           </>
         }
       />
@@ -309,20 +363,42 @@ export function CalendarPage() {
         ) : (
           <DnDCalendar
             localizer={localizer}
-            events={bigCalEvents}
+            events={[...bigCalEvents, ...taskEvents]}
             view={view}
             onView={setView}
             date={date}
             onNavigate={setDate}
             toolbar={false}
             resizable
-            draggableAccessor={(event) => !event.resource?.rrule}
-            resizableAccessor={(event) => !event.resource?.rrule}
-            onEventDrop={handleEventDrop}
-            onEventResize={handleEventResize}
+            selectable={canCreate}
+            onSelectSlot={(slot) => {
+              if (!canCreate) return
+              const start = new Date(slot.start)
+              const end = new Date(slot.end)
+              // Month-view (and all-day row) selections come through as whole days.
+              const allDay = view === 'month' ||
+                (start.getHours() === 0 && end.getHours() === 0 && end.getTime() - start.getTime() >= 24 * 60 * 60 * 1000)
+              setDialog({ occ: null, col: defaultCol, range: { start, end, allDay } })
+            }}
+            draggableAccessor={(event) => event.resource.kind === 'event' && !readOnlyRefs.has(event.resource._colName)}
+            resizableAccessor={(event) => event.resource.kind === 'event' && !readOnlyRefs.has(event.resource._colName)}
+            onEventDrop={handleMove}
+            onEventResize={handleMove}
             eventPropGetter={(event) => {
               const colName = (event).resource?._colName
               const c = colName ? collectionColor(names, colName) : accentColor
+              if (event.resource.kind === 'todo') {
+                return {
+                  style: {
+                    backgroundColor: 'transparent',
+                    color: 'var(--foreground)',
+                    borderColor: 'transparent',
+                    borderRadius: 4,
+                    fontSize: 16,
+                    fontWeight: 500,
+                  },
+                }
+              }
               return event.allDay
                 ? {
                     style: {
@@ -347,9 +423,17 @@ export function CalendarPage() {
             }}
             components={{
               event: ({ event }: { event: RBCEvent }) => {
-                if (event.allDay) return <>{event.title}</>
                 const colName = event.resource?._colName
                 const c = colName ? collectionColor(names, colName) : accentColor
+                if (event.resource.kind === 'todo') {
+                  return (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden' }}>
+                      <CheckCircle2 style={{ width: 12, height: 12, color: c.bg, flexShrink: 0 }} strokeWidth={2.5} />
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{event.title}</span>
+                    </span>
+                  )
+                }
+                if (event.allDay) return <>{event.title}</>
                 return (
                   <span style={{ display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden' }}>
                     <span style={{ width: 7, height: 7, borderRadius: '50%', background: c.bg, flexShrink: 0 }} />
@@ -361,17 +445,12 @@ export function CalendarPage() {
             }}
             onSelectEvent={(e) => {
               const ev = (e).resource
-              setForm({
-                uid: ev.uid,
-                summary: ev.summary,
-                start: ev.start,
-                end: ev.end ?? '',
-                description: ev.description ?? '',
-                location: ev.location ?? '',
-                href: ev.href,
-                _colName: ev._colName,
-              })
-              setIsNew(false)
+              if (ev.kind === 'todo') {
+                // The capture list has its own page at /inbox rather than /:collection.
+                void navigateTo(ev._colName === 'capture' ? '/inbox' : `/${ev._colName}`)
+                return
+              }
+              setDialog({ occ: ev.occ, col: ev._colName })
             }}
             style={{ height: '100%' }}
           />
@@ -379,53 +458,33 @@ export function CalendarPage() {
       </div>
 
       {/* Event dialog */}
-      <Dialog open={!!form} onOpenChange={(o) => !o && setForm(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{isNew ? 'New event' : 'Edit event'}</DialogTitle>
-          </DialogHeader>
-          {form && (
-            <div className="grid gap-3">
-              {isMulti && isNew && (
-                <div>
-                  <Label>Collection</Label>
-                  <select
-                    value={form._colName}
-                    onChange={(e) => setForm({ ...form, _colName: e.target.value })}
-                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                  >
-                    {collections
-                      .filter((c: Collection) => c.name !== 'inbox')
-                      .map((c: Collection) => (
-                        <option key={c.name} value={c.name}>{c.display_name}</option>
-                      ))}
-                  </select>
-                </div>
-              )}
-              <div><Label>Title</Label><Input value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} autoFocus /></div>
-              <div>
-                <Label>Start <span className="text-muted-foreground font-normal">(ISO 8601)</span></Label>
-                <Input value={form.start} onChange={(e) => setForm({ ...form, start: e.target.value })} placeholder="2026-05-15T09:00:00Z" />
-              </div>
-              <div><Label>End</Label><Input value={form.end} onChange={(e) => setForm({ ...form, end: e.target.value })} /></div>
-              <div><Label>Description</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
-              <div><Label>Location</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></div>
-            </div>
-          )}
-          <DialogFooter className="gap-2">
-            {!isNew && (
-              <Button variant="destructive" onClick={() => del.mutate(form!)}>Delete</Button>
-            )}
-            <Button
-              onClick={() => save.mutate(form!)}
-              disabled={save.isPending}
-              style={{ background: accentColor.bg, color: '#fff', border: 'none' }}
-            >
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {dialog && (
+        <EventDialog
+          occurrence={dialog.occ}
+          initialRange={dialog.range}
+          collections={collections}
+          colRef={dialog.col}
+          showCollectionPicker={isMulti && !dialog.occ}
+          readOnly={readOnlyRefs.has(dialog.col)}
+          onClose={() => setDialog(null)}
+        />
+      )}
+
+      {/* Scope chooser for dragging/resizing a recurring occurrence */}
+      <ScopeDialog
+        open={!!pendingMove}
+        accent={accentColor.bg}
+        title="Move recurring event"
+        warning={moveResetsOverrides
+          ? 'Moving all events resets skipped and edited occurrences of this series.'
+          : undefined}
+        options={[
+          { value: 'this', label: 'This event', hint: 'Only this occurrence moves.' },
+          { value: 'all', label: 'All events', hint: 'The whole series shifts by the same amount.' },
+        ]}
+        onChoose={handleMoveScope}
+        onCancel={() => setPendingMove(null)}
+      />
     </div>
   )
 }

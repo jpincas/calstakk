@@ -2,14 +2,22 @@
  * Dev data seed script. Run with:
  *   ~/.deno/bin/deno run --allow-net scripts/seed.ts
  *
- * Wipes existing non-inbox collections and creates a rich set of
+ * Wipes all existing collections and creates a rich set of
  * collections, events, and todos for UI development.
  */
 
 const BASE = 'http://localhost:5232'
-const USER = 'calstakk'
+const USER = Deno.env.get('CALSTAKK_USERNAME') || 'calstakk'
+const PASSWORD = Deno.env.get('CALSTAKK_PASSWORD') || ''
 const HOME = `${BASE}/calendars/${USER}`
 const CS_NS = 'https://calstakk.dev/ns/'
+
+// Owner credentials — only needed when the server enforces auth
+const AUTH: Record<string, string> = PASSWORD
+  ? { Authorization: 'Basic ' + btoa(`${USER}:${PASSWORD}`) }
+  : {}
+
+const homeOf = (username: string) => `${BASE}/calendars/${username}`
 
 // ── iCal helpers ────────────────────────────────────────────────────────────
 
@@ -77,42 +85,42 @@ function vtodo(fields: {
 
 // ── CalDAV helpers ───────────────────────────────────────────────────────────
 
-async function mkcalendar(name: string, displayName: string, color?: string): Promise<void> {
-  const path = `${HOME}/${name}`
+async function mkcalendar(name: string, displayName: string, color?: string, home = HOME): Promise<void> {
+  const path = `${home}/${name}`
   const body = `<?xml version="1.0" encoding="UTF-8"?>
 <c:mkcalendar xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
   <d:set><d:prop>
     <d:displayname>${displayName}</d:displayname>
   </d:prop></d:set>
 </c:mkcalendar>`
-  const res = await fetch(path, { method: 'MKCALENDAR', headers: { 'Content-Type': 'application/xml' }, body })
+  const res = await fetch(path, { method: 'MKCALENDAR', headers: { 'Content-Type': 'application/xml', ...AUTH }, body })
   if (res.status !== 201 && res.status !== 405) {
     console.warn(`  MKCALENDAR ${name}: ${res.status}`)
   }
 
   if (color) {
-    await proppatch(name, `<a:calendar-color xmlns:a="http://apple.com/ns/ical/">${color}</a:calendar-color>`)
+    await proppatch(name, `<a:calendar-color xmlns:a="http://apple.com/ns/ical/">${color}</a:calendar-color>`, home)
   }
 }
 
-async function proppatch(name: string, setPropXml: string): Promise<void> {
-  const path = `${HOME}/${name}`
+async function proppatch(name: string, setPropXml: string, home = HOME): Promise<void> {
+  const path = `${home}/${name}`
   const body = `<?xml version="1.0" encoding="UTF-8"?>
 <d:propertyupdate xmlns:d="DAV:">
   <d:set><d:prop>${setPropXml}</d:prop></d:set>
 </d:propertyupdate>`
-  await fetch(path, { method: 'PROPPATCH', headers: { 'Content-Type': 'application/xml' }, body })
+  await fetch(path, { method: 'PROPPATCH', headers: { 'Content-Type': 'application/xml', ...AUTH }, body })
 }
 
 async function setGroup(name: string, group: string): Promise<void> {
   await proppatch(name, `<cs:group xmlns:cs="${CS_NS}">${group}</cs:group>`)
 }
 
-async function putObject(collection: string, icsUid: string, ics: string): Promise<void> {
-  const path = `${HOME}/${collection}/${icsUid}.ics`
+async function putObject(collection: string, icsUid: string, ics: string, home = HOME): Promise<void> {
+  const path = `${home}/${collection}/${icsUid}.ics`
   const res = await fetch(path, {
     method: 'PUT',
-    headers: { 'Content-Type': 'text/calendar', 'If-None-Match': '*' },
+    headers: { 'Content-Type': 'text/calendar', 'If-None-Match': '*', ...AUTH },
     body: ics,
   })
   if (!res.ok && res.status !== 412) {
@@ -120,13 +128,47 @@ async function putObject(collection: string, icsUid: string, ics: string): Promi
   }
 }
 
-async function deleteCollection(name: string): Promise<void> {
-  await fetch(`${HOME}/${name}`, { method: 'DELETE' })
+async function deleteCollection(name: string, home = HOME): Promise<void> {
+  await fetch(`${home}/${name}`, { method: 'DELETE', headers: AUTH })
+}
+
+/** Create a user via the admin API. 409 (already exists) is fine. */
+async function ensureUser(user: { username: string; password: string; displayName: string; email: string }): Promise<void> {
+  const res = await fetch(`${BASE}/api/users`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...AUTH },
+    body: JSON.stringify(user),
+  })
+  if (!res.ok && res.status !== 409) {
+    console.warn(`  create user ${user.username}: ${res.status} ${await res.text()}`)
+  } else {
+    await res.body?.cancel()
+  }
+}
+
+/** Share a collection with users via the ACL method (RFC 3744). Replaces the sharee set. */
+async function share(
+  home: string,
+  collection: string,
+  sharees: Array<{ username: string; access: 'read' | 'read-write' }>,
+): Promise<void> {
+  const aces = sharees.map((s) => {
+    const write = s.access === 'read-write' ? '<d:privilege><d:write/></d:privilege>' : ''
+    return `<d:ace><d:principal><d:href>/principals/${s.username}</d:href></d:principal>` +
+      `<d:grant><d:privilege><d:read/></d:privilege>${write}</d:grant></d:ace>`
+  }).join('')
+  const body = `<?xml version="1.0" encoding="UTF-8"?>\n<d:acl xmlns:d="DAV:">${aces}</d:acl>`
+  const res = await fetch(`${home}/${collection}`, {
+    method: 'ACL',
+    headers: { 'Content-Type': 'application/xml', ...AUTH },
+    body,
+  })
+  if (!res.ok) console.warn(`  ACL ${collection}: ${res.status} ${await res.text()}`)
 }
 
 async function listCollections(): Promise<string[]> {
   const body = `<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:displayname/><d:resourcetype/></d:prop></d:propfind>`
-  const res = await fetch(HOME, { method: 'PROPFIND', headers: { Depth: '1', 'Content-Type': 'application/xml' }, body })
+  const res = await fetch(HOME, { method: 'PROPFIND', headers: { Depth: '1', 'Content-Type': 'application/xml', ...AUTH }, body })
   const text = await res.text()
   const matches = [...text.matchAll(/<D:href>([^<]+)<\/D:href>/g)]
   return matches
@@ -156,7 +198,6 @@ const EVENTS: Array<{ collection: string; fields: Parameters<typeof vevent>[0] }
   { collection: 'work', fields: { summary: 'Team offsite', start: date(7), end: date(9), allDay: true, description: 'Q3 team strategy offsite in Barcelona' } },
   { collection: 'work', fields: { summary: 'Quarterly business review', start: dt(14, 9), end: dt(14, 17), location: 'HQ London', description: 'All-hands QBR — full day' } },
   { collection: 'work', fields: { summary: 'Code freeze', start: date(10), end: date(11), allDay: true } },
-  { collection: 'work', fields: { summary: 'Daily standup', start: dt(-1, 9, 30), end: dt(-1, 9, 45) } },
   { collection: 'work', fields: { summary: 'Client demo — Acme Corp', start: dt(-2, 15), end: dt(-2, 16), status: 'CONFIRMED', location: 'Google Meet' } },
   { collection: 'work', fields: { summary: 'Retrospective', start: dt(-3, 14), end: dt(-3, 15), description: 'Sprint 23 retro' } },
 
@@ -174,16 +215,104 @@ const EVENTS: Array<{ collection: string; fields: Parameters<typeof vevent>[0] }
   { collection: 'personal', fields: { summary: 'Catch-up with James', start: dt(8, 12), end: dt(8, 13, 30), location: 'Flat Iron, Covent Garden' } },
 
   // ── Health events ──
-  { collection: 'health', fields: { summary: 'Morning run', start: dt(0, 7), end: dt(0, 7, 45), description: '8km easy pace' } },
   { collection: 'health', fields: { summary: 'Strength training', start: dt(1, 7), end: dt(1, 8), location: 'PureGym London Bridge' } },
   { collection: 'health', fields: { summary: 'GP annual check-up', start: dt(6, 9, 30), end: dt(6, 10), location: 'Brunswick Health Centre' } },
-  { collection: 'health', fields: { summary: 'Morning run', start: dt(-1, 7), end: dt(-1, 7, 40) } },
   { collection: 'health', fields: { summary: 'Physio session', start: dt(9, 11), end: dt(9, 12), location: 'City Physio, EC2' } },
 
   // ── Home events ──
   { collection: 'home', fields: { summary: 'Broadband engineer visit', start: dt(1, 8), end: dt(1, 12), description: 'BT engineer — stay home' } },
   { collection: 'home', fields: { summary: 'Landlord inspection', start: dt(13, 14), end: dt(13, 15) } },
 ]
+
+/**
+ * Recurring and round-trip fixtures, written as raw component lines so the UI
+ * exercises real-world shapes: RRULE series, EXDATEs, RECURRENCE-ID overrides
+ * (moved and cancelled), VALARMs, and a TZID + X-prop round-trip canary.
+ * Each entry's lines are wrapped in a VCALENDAR with the generated UID/DTSTAMP.
+ */
+const RAW_EVENTS: Array<{ collection: string; lines: (u: string, s: string) => string[] }> = [
+  // Weekday standup: skips Fri 3 Jul (EXDATE), Mon 6 Jul moved to 10:00 (override), 5-min reminder.
+  {
+    collection: 'work',
+    lines: (u, s) => [
+      'BEGIN:VEVENT', `UID:${u}`, `DTSTAMP:${s}`,
+      'DTSTART:20260615T083000Z', 'DTEND:20260615T084500Z',
+      'SUMMARY:Daily standup', 'LOCATION:Meet',
+      'RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR',
+      'EXDATE:20260703T083000Z',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:-PT5M', 'DESCRIPTION:Standup in 5', 'END:VALARM',
+      'END:VEVENT',
+      'BEGIN:VEVENT', `UID:${u}`, `DTSTAMP:${s}`,
+      'RECURRENCE-ID:20260706T083000Z',
+      'DTSTART:20260706T100000Z', 'DTEND:20260706T101500Z',
+      'SUMMARY:Daily standup (moved — room clash)', 'LOCATION:Meet',
+      'END:VEVENT',
+    ],
+  },
+  // Mon/Wed/Fri run, open-ended.
+  {
+    collection: 'health',
+    lines: (u, s) => [
+      'BEGIN:VEVENT', `UID:${u}`, `DTSTAMP:${s}`,
+      'DTSTART:20260601T060000Z', 'DTEND:20260601T064500Z',
+      'SUMMARY:Morning run', 'DESCRIPTION:8km easy pace',
+      'RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR',
+      'END:VEVENT',
+    ],
+  },
+  // All-day weekly series.
+  {
+    collection: 'home',
+    lines: (u, s) => [
+      'BEGIN:VEVENT', `UID:${u}`, `DTSTAMP:${s}`,
+      'DTSTART;VALUE=DATE:20260607', 'DTEND;VALUE=DATE:20260608',
+      'SUMMARY:Meal prep Sunday',
+      'RRULE:FREQ=WEEKLY',
+      'END:VEVENT',
+    ],
+  },
+  // Fortnightly with an UNTIL bound and a cancelled occurrence.
+  {
+    collection: 'learning',
+    lines: (u, s) => [
+      'BEGIN:VEVENT', `UID:${u}`, `DTSTAMP:${s}`,
+      'DTSTART:20260616T180000Z', 'DTEND:20260616T190000Z',
+      'SUMMARY:Spanish conversation class', 'LOCATION:City Lit, Covent Garden',
+      'RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU;UNTIL=20261020T235959Z',
+      'END:VEVENT',
+      'BEGIN:VEVENT', `UID:${u}`, `DTSTAMP:${s}`,
+      'RECURRENCE-ID:20260714T180000Z',
+      'DTSTART:20260714T180000Z', 'DTEND:20260714T190000Z',
+      'SUMMARY:Spanish conversation class', 'STATUS:CANCELLED',
+      'END:VEVENT',
+    ],
+  },
+  // Round-trip canary: TZID datetimes with embedded VTIMEZONE, CLASS, X-props,
+  // and a parametered alarm — none of which the UI edits, all of which must survive a save.
+  {
+    collection: 'personal',
+    lines: (u, s) => [
+      'BEGIN:VTIMEZONE', 'TZID:Europe/Madrid',
+      'BEGIN:DAYLIGHT', 'DTSTART:19700329T020000', 'TZOFFSETFROM:+0100', 'TZOFFSETTO:+0200',
+      'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU', 'END:DAYLIGHT',
+      'BEGIN:STANDARD', 'DTSTART:19701025T030000', 'TZOFFSETFROM:+0200', 'TZOFFSETTO:+0100',
+      'RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU', 'END:STANDARD',
+      'END:VTIMEZONE',
+      'BEGIN:VEVENT', `UID:${u}`, `DTSTAMP:${s}`,
+      'DTSTART;TZID=Europe/Madrid:20260707T160000',
+      'DTEND;TZID=Europe/Madrid:20260707T170000',
+      'SUMMARY:Madrid team call', 'LOCATION:Zoom',
+      'CLASS:PRIVATE', 'X-SEED-CANARY:round-trip-check',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER;RELATED=START:-PT10M',
+      'DESCRIPTION:Time to dial in', 'END:VALARM',
+      'END:VEVENT',
+    ],
+  },
+]
+
+function rawVcal(lines: string[]): string {
+  return `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalStakk//Seed//EN\r\n${lines.join('\r\n')}\r\nEND:VCALENDAR\r\n`
+}
 
 const TODOS: Array<{ collection: string; fields: Parameters<typeof vtodo>[0] }> = [
   // ── Work todos ──
@@ -240,13 +369,41 @@ const TODOS: Array<{ collection: string; fields: Parameters<typeof vtodo>[0] }> 
   { collection: 'capture', fields: { summary: 'Follow up on freelance invoice #47', priority: 1, due: date(3) } },
 ]
 
+// ── Multi-user seed data ─────────────────────────────────────────────────────
+
+const EXTRA_USERS = [
+  { username: 'anna', password: 'anna', displayName: 'Anna Torres', email: 'anna@example.com' },
+  { username: 'ben',  password: 'ben',  displayName: 'Ben Okafor',  email: 'ben@example.com' },
+]
+
+// Anna owns a team calendar shared back to the owner (read-write) and Ben (read)
+const ANNA_COLLECTION = { name: 'team', display: 'Team Projects', color: '#0891B2' }
+
+const ANNA_EVENTS: Array<Parameters<typeof vevent>[0]> = [
+  { summary: 'Team sync', start: dt(0, 10), end: dt(0, 10, 30), location: 'Meet' },
+  { summary: 'Design review', start: dt(2, 15), end: dt(2, 16), description: 'New onboarding flow' },
+  { summary: 'Release planning', start: dt(4, 11), end: dt(4, 12, 30) },
+  { summary: 'Team lunch', start: dt(5, 12, 30), end: dt(5, 14), location: 'Dishoom' },
+  { summary: 'Hack day', start: date(9), end: date(10), allDay: true },
+]
+
+const ANNA_TODOS: Array<Parameters<typeof vtodo>[0]> = [
+  { summary: 'Prepare demo environment', priority: 1, due: date(2) },
+  { summary: 'Collect feedback from beta users', priority: 2, due: date(4) },
+  { summary: 'Write release notes', priority: 3, due: date(6) },
+  { summary: 'Triage open bugs', priority: 2, status: 'IN-PROCESS' },
+  { summary: 'Update team wiki', priority: 5 },
+  { summary: 'Order new monitors', priority: 4, status: 'COMPLETED' },
+]
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 console.log('Seeding CalStakk dev data...\n')
 
-// 1. Wipe existing collections except capture, so we start clean
-const existing = await listCollections()
-const toWipe = existing.filter(n => n !== 'capture')
+// 1. Wipe all existing collections, so we start clean. 'capture' (the inbox)
+// is recreated below before its todos are seeded — leaving it out here made
+// every seed run append another copy of the inbox todos.
+const toWipe = await listCollections()
 console.log(`Wiping existing collections: ${toWipe.join(', ') || 'none'}`)
 for (const name of toWipe) {
   await deleteCollection(name)
@@ -270,9 +427,14 @@ for (const { collection, fields } of EVENTS) {
   const ics = vevent({ ...fields, uid: u })
   await putObject(collection, u, ics)
 }
-console.log(`  ${EVENTS.length} events created`)
+for (const { collection, lines } of RAW_EVENTS) {
+  const u = uid()
+  await putObject(collection, u, rawVcal(lines(u, stamp())))
+}
+console.log(`  ${EVENTS.length + RAW_EVENTS.length} events created (${RAW_EVENTS.length} recurring/round-trip fixtures)`)
 
-// 4. Seed todos
+// 4. Seed todos (ensure the capture inbox exists first — the UI normally creates it)
+await mkcalendar('capture', 'Inbox')
 console.log('\nSeeding todos...')
 for (const { collection, fields } of TODOS) {
   const u = uid()
@@ -280,5 +442,37 @@ for (const { collection, fields } of TODOS) {
   await putObject(collection, u, ics)
 }
 console.log(`  ${TODOS.length} todos created`)
+
+// 5. Multi-user: accounts, a second user's calendar, and shares in both directions
+console.log('\nCreating users...')
+for (const u of EXTRA_USERS) {
+  await ensureUser(u)
+  console.log(`  ${u.displayName} (${u.username} / ${u.password})`)
+}
+
+console.log("\nSeeding anna's team calendar...")
+const annaHome = homeOf('anna')
+await deleteCollection(ANNA_COLLECTION.name, annaHome)
+await mkcalendar(ANNA_COLLECTION.name, ANNA_COLLECTION.display, ANNA_COLLECTION.color, annaHome)
+for (const fields of ANNA_EVENTS) {
+  const u = uid()
+  await putObject(ANNA_COLLECTION.name, u, vevent({ ...fields, uid: u }), annaHome)
+}
+for (const fields of ANNA_TODOS) {
+  const u = uid()
+  await putObject(ANNA_COLLECTION.name, u, vtodo({ ...fields, uid: u }), annaHome)
+}
+console.log(`  ${ANNA_EVENTS.length} events, ${ANNA_TODOS.length} todos`)
+
+console.log('\nSharing collections...')
+await share(annaHome, ANNA_COLLECTION.name, [
+  { username: USER, access: 'read-write' },
+  { username: 'ben', access: 'read' },
+])
+console.log(`  anna/team → ${USER} (read-write), ben (read)`)
+await share(HOME, 'work', [{ username: 'anna', access: 'read-write' }])
+console.log('  work → anna (read-write)')
+await share(HOME, 'home', [{ username: 'ben', access: 'read' }])
+console.log('  home → ben (read)')
 
 console.log('\nDone.')
