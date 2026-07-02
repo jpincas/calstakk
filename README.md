@@ -16,3 +16,34 @@ Under active reconstruction. The demolition phase has stripped the codebase to C
 deno task check     # the gate: backend lint + type-check + tests, then web lint + build
 deno task iterate   # fast backend type-check only
 ```
+
+## MCP server
+
+`mcp/` contains a full-suite [MCP](https://modelcontextprotocol.io) server (stdio transport) so
+AI agents can drive CalStakk: collections, events (including recurrence editing with
+series / single-occurrence / this-and-future scopes), todos, sections, sync tokens,
+free/busy, sharing, and user administration — 29 tools in total. It reuses the web
+CalDAV client (`web/src/api/`), so there is exactly one CalDAV implementation.
+
+```
+deno task mcp       # run against the server configured in .env / .env.local
+```
+
+Environment (loaded from `.env.local` / `.env` by the task):
+
+| Var | Default | Purpose |
+|---|---|---|
+| `CALSTAKK_URL` | `http://127.0.0.1:5232` | Origin of the CalStakk server to talk to |
+| `CALSTAKK_USERNAME` | `calstakk` | Acting user |
+| `CALSTAKK_PASSWORD` | *(unset)* | Acting user's password; omit for a no-auth dev server |
+
+Register with Claude Code:
+
+```
+claude mcp add calstakk \
+  --env CALSTAKK_URL=http://127.0.0.1:5232 \
+  --env CALSTAKK_USERNAME=calstakk \
+  --env CALSTAKK_PASSWORD=... \
+  -- deno run --config /path/to/calstakk/deno.json --allow-net --allow-env \
+     /path/to/calstakk/mcp/main.ts
+```

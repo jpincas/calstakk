@@ -14,6 +14,7 @@ A private, self-hosted CalDAV/VTODO server + web UI. Goal: push the CalDAV (RFC 
 |---|---|
 | CalDAV server (`src/`) | ✅ Spec-complete, incl. multi-user sharing (RFC 3744 subset) + admin API. 562/562 conformance/API tests passing. |
 | JS/TS CalDAV client (`web/src/api/`) | ✅ Complete. Covers all operations the UI needs, incl. auth, sharing, admin. |
+| MCP server (`mcp/`) | ✅ Complete. 29 tools covering the full surface (agents' entry point); reuses the CalDAV client. |
 | Web UI (`web/src/`) | 🔨 Under active development. Multi-user (login, sharing, user admin) shipped. |
 
 ---
@@ -124,6 +125,30 @@ offered mutations.
 - `Me`, `UserAccount`, `Sharee`, `PrincipalMatch` — identity/sharing/admin types
 
 All datetimes are iCal compact strings (`20260101T090000Z`). Use `web/src/lib/dates.ts` for display formatting.
+
+---
+
+## MCP Server
+
+`mcp/` is a full-suite MCP server (stdio) exposing everything to AI agents — 29 tools:
+identity, collections, events (recurrence-aware `update_event`/`delete_event` with
+`scope: series | occurrence | this_and_future`), todos, sections, sync, free/busy,
+sharing, and admin. See the README's *MCP server* section for env vars and registration.
+
+Key facts:
+- **It reuses the web CalDAV client** (`web/src/api/`) and recurrence engine
+  (`web/src/lib/recur.ts`) — there is exactly one CalDAV implementation. Three runtime
+  adapters make the browser-targeted client run under Deno: `@xmldom/xmldom` globals +
+  a base-URL fetch wrapper (`mcp/shims.ts`), the `"@/": "./web/src/"` import-map entry,
+  and `"unstable": ["sloppy-imports"]` (both in `deno.json`). In `mcp/` code itself,
+  always import web files with explicit `.ts` extensions (lint enforces it).
+- **Never `console.log` in `mcp/`** — stdout is the MCP protocol stream; use
+  `console.error` for diagnostics.
+- Recurrence edit orchestration mirrors `web/src/components/calendar/useEventMutations.ts`;
+  keep the two in sync if edit semantics ever change.
+- Gated like everything else: `deno lint` + `deno check mcp/main.ts` + integration tests
+  (`tests/mcp_test.ts`, `tests/mcp_recurrence_test.ts`) all run inside `deno task check`.
+  `deno task mcp` runs it locally.
 
 ---
 

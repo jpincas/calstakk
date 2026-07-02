@@ -255,25 +255,22 @@ export class CalDAVClient {
   ): Promise<void> {
     const path = await this.colPath(name)
     const sets: string[] = []
-    const removes: string[] = []
     if (props.displayName !== undefined)
       sets.push(`<d:displayname>${escXml(props.displayName)}</d:displayname>`)
     if (props.color !== undefined)
       sets.push(`<a:calendar-color xmlns:a="${APPLE_NS}">${escXml(props.color)}</a:calendar-color>`)
     if (props.description !== undefined)
       sets.push(`<c:calendar-description xmlns:c="${CALDAV_NS}">${escXml(props.description)}</c:calendar-description>`)
-    if (props.group === null) {
-      removes.push(`<cs:group xmlns:cs="${CS_NS}"/>`)
-    } else if (props.group !== undefined) {
-      sets.push(`<cs:group xmlns:cs="${CS_NS}">${escXml(props.group)}</cs:group>`)
+    if (props.group !== undefined) {
+      // Clearing writes an empty value rather than a d:remove: the server acks
+      // remove ops without applying them, and reads already treat '' as unset.
+      sets.push(`<cs:group xmlns:cs="${CS_NS}">${escXml(props.group ?? '')}</cs:group>`)
     }
-    if (sets.length === 0 && removes.length === 0) return
+    if (sets.length === 0) return
 
-    const setPart = sets.length > 0 ? `<d:set><d:prop>${sets.join('')}</d:prop></d:set>` : ''
-    const removePart = removes.length > 0 ? `<d:remove><d:prop>${removes.join('')}</d:prop></d:remove>` : ''
     const body = `<?xml version="1.0" encoding="UTF-8"?>
 <d:propertyupdate xmlns:d="DAV:" xmlns:c="${CALDAV_NS}" xmlns:a="${APPLE_NS}">
-  ${setPart}${removePart}
+  <d:set><d:prop>${sets.join('')}</d:prop></d:set>
 </d:propertyupdate>`
     const res = await fetch(path, {
       method: 'PROPPATCH',
@@ -508,19 +505,22 @@ export class CalDAVClient {
 
   // ── Free/Busy ────────────────────────────────────────────────────────────────
 
+  /**
+   * Busy periods across all of the user's own collections, via the RFC 4791
+   * §7.10 free-busy-query REPORT (issued per collection, results merged).
+   */
   async queryFreeBusy(from: string, to: string): Promise<FreeBusySlot[]> {
-    const outbox = `${await this.ownHome()}/outbox`
     const body = `<?xml version="1.0" encoding="UTF-8"?>
 <c:free-busy-query xmlns:c="${CALDAV_NS}">
   <c:time-range start="${from}" end="${to}"/>
 </c:free-busy-query>`
-    const res = await fetch(outbox, {
-      method: 'POST',
-      headers: this.headers({ 'Content-Type': 'application/xml' }),
-      body,
-    })
-    if (!res.ok) throw new CalDAVError(res.status, `Free/busy query failed: ${res.status}`)
-    return parseFreeBusy(await res.text())
+    const collections = await this.listCollections()
+    const slots: FreeBusySlot[] = []
+    for (const col of collections) {
+      if (col.shared) continue
+      slots.push(...parseFreeBusy(await report(col.href, body, this.headers())))
+    }
+    return slots.sort((a, b) => a.start.localeCompare(b.start))
   }
 
   // ── Identity / session ───────────────────────────────────────────────────────
