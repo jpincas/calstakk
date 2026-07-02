@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { caldav } from '@/api'
+import { withOptimism, patchList } from '@/lib/optimistic'
 import { calendarLinkFor, fmtTime } from '@/lib/dates'
 import { expandEvent, type Occurrence } from '@/lib/recur'
 import { collectionColor, SETTING_COLORS } from '@/lib/colors'
@@ -204,32 +205,36 @@ export function ProjectPage() {
 
   // ── Mutations ─────────────────────────────────────────────────────────────
 
+  const formToEvent = (f: EventForm): Omit<CalEvent, 'href'> => ({
+    uid: f.uid,
+    summary: f.summary,
+    start: f.start || new Date().toISOString(),
+    end: f.end || undefined,
+    description: f.description || undefined,
+    location: f.location || undefined,
+  })
+
   const eventSave = useMutation({
-    mutationFn: (f: EventForm) =>
-      caldav.createEvent(colName!, {
-        uid: f.uid,
-        summary: f.summary,
-        start: f.start || new Date().toISOString(),
-        end: f.end || undefined,
-        description: f.description || undefined,
-        location: f.location || undefined,
-      }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['events', colName] })
-      setEventForm(null)
-      toast.success('Event created')
-    },
-    onError: (e) => toast.error(String(e)),
+    mutationFn: (event: Omit<CalEvent, 'href'>) => caldav.createEvent(colName!, event),
+    ...withOptimism<Omit<CalEvent, 'href'>>(qc, {
+      patches: (event) => [
+        patchList<CalEvent>(['events', colName], (events) => [...events, { ...event, href: '' }]),
+      ],
+      sideEffects: () => setEventForm(null),
+      onSuccess: () => toast.success('Event created'),
+    }),
   })
 
   const saveName = useMutation({
     mutationFn: (name: string) =>
       caldav.updateCollectionProps(colName!, { displayName: name }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['collections'] })
-      setEditingName(false)
-    },
-    onError: (e) => toast.error(String(e)),
+    ...withOptimism<string>(qc, {
+      patches: (name) => [
+        patchList<Collection>(['collections'], (cols) =>
+          cols.map((c) => (c.ref === colName ? { ...c, display_name: name } : c))),
+      ],
+      sideEffects: () => setEditingName(false),
+    }),
   })
 
   const saveSettings = useMutation({
@@ -238,12 +243,18 @@ export function ProjectPage() {
         color: settingColor || undefined,
         group: settingGroup.trim() || null,
       }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['collections'] })
-      setSettingsOpen(false)
-      toast.success('Settings saved')
-    },
-    onError: (e) => toast.error(String(e)),
+    ...withOptimism<void>(qc, {
+      patches: () => [
+        patchList<Collection>(['collections'], (cols) =>
+          cols.map((c) =>
+            c.ref === colName
+              ? { ...c, color: settingColor || undefined, group: settingGroup.trim() || undefined }
+              : c
+          )),
+      ],
+      sideEffects: () => setSettingsOpen(false),
+      onSuccess: () => toast.success('Settings saved'),
+    }),
   })
 
   // ── Name edit handler ─────────────────────────────────────────────────────
@@ -599,7 +610,7 @@ export function ProjectPage() {
           )}
           <DialogFooter>
             <Button
-              onClick={() => eventSave.mutate(eventForm!)}
+              onClick={() => eventSave.mutate(formToEvent(eventForm!))}
               disabled={eventSave.isPending || !eventForm?.summary}
               style={{ background: color.bg, color: '#fff', border: 'none' }}
             >

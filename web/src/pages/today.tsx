@@ -3,6 +3,7 @@ import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/rea
 import { format, isToday, isBefore, startOfDay, addDays } from 'date-fns'
 import { useNavigate } from 'react-router-dom'
 import { caldav } from '@/api'
+import { withOptimism, patchList } from '@/lib/optimistic'
 import { collectionColor } from '@/lib/colors'
 import { calendarLinkFor, parseCalDate, fmtTime, fmtDateShort } from '@/lib/dates'
 import { expandEvent, type Occurrence } from '@/lib/recur'
@@ -169,9 +170,17 @@ export function TodayPage() {
         status: cleanTodo.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED',
       })
     },
-    onSuccess: (_, { todo }) => {
-      void qc.invalidateQueries({ queryKey: ['todos', todo._colName] })
-    },
+    ...withOptimism<{ todo: TodoMeta }>(qc, {
+      patches: ({ todo }) =>
+        readOnlyRefs.has(todo._colName) ? [] : [
+          patchList<Todo>(['todos', todo._colName], (todos) =>
+            todos.map((t) =>
+              t.uid === todo.uid
+                ? { ...t, status: t.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED' }
+                : t
+            )),
+        ],
+    }),
   })
 
   // ── Tasks pane ───────────────────────────────────────────────────────────────
@@ -213,7 +222,7 @@ export function TodayPage() {
                   onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
                 >
                   <button
-                    style={{ flexShrink: 0, marginTop: 1, background: 'none', border: 'none', cursor: ro ? 'default' : 'pointer', padding: 0, opacity: toggle.isPending ? 0.5 : 1 }}
+                    style={{ flexShrink: 0, marginTop: 1, background: 'none', border: 'none', cursor: ro ? 'default' : 'pointer', padding: 0 }}
                     onClick={ro ? undefined : () => toggle.mutate({ todo })}
                   >
                     <Circle style={{ width: 16, height: 16, color: overdue ? 'var(--destructive)' : todo._colColor }} />

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { caldav } from '@/api'
+import { withOptimism, patchList } from '@/lib/optimistic'
 import { SETTING_COLORS } from '@/lib/colors'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -45,20 +46,39 @@ export function NewCollectionDialog({ open, onOpenChange }: Props) {
   })
 
   const create = useMutation({
-    mutationFn: () => {
-      const slug = uniqueSlug(name, collections.map((c: Collection) => c.ref))
-      return caldav.createCollection(slug, { displayName: name.trim(), color: color || undefined }).then(() => slug)
-    },
-    onSuccess: (slug) => {
-      void qc.invalidateQueries({ queryKey: ['collections'] })
-      setName('')
-      setColor('')
-      onOpenChange(false)
-      toast.success('List created')
-      void navigate(`/${slug}`)
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
+    mutationFn: (slug: string) =>
+      caldav.createCollection(slug, { displayName: name.trim(), color: color || undefined }),
+    ...withOptimism<string>(qc, {
+      patches: (slug) => [
+        patchList<Collection>(['collections'], (cols) => [
+          ...cols,
+          {
+            name: slug,
+            ref: slug,
+            display_name: name.trim(),
+            href: '',
+            owner: '',
+            shared: false,
+            myAccess: 'owner' as const,
+            color: color || undefined,
+          },
+        ]),
+      ],
+      sideEffects: () => {
+        setName('')
+        setColor('')
+        onOpenChange(false)
+      },
+      // Navigate only once the collection exists — the project page's
+      // todos/events/sections queries 404 against a not-yet-created collection.
+      onSuccess: (_data, slug) => {
+        toast.success('List created')
+        void navigate(`/${slug}`)
+      },
+    }),
   })
+
+  const submit = () => create.mutate(uniqueSlug(name, collections.map((c: Collection) => c.ref)))
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -75,7 +95,7 @@ export function NewCollectionDialog({ open, onOpenChange }: Props) {
               onChange={(e) => setName(e.target.value)}
               autoFocus
               placeholder="e.g. Groceries"
-              onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) create.mutate() }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) submit() }}
             />
           </div>
 
@@ -135,7 +155,7 @@ export function NewCollectionDialog({ open, onOpenChange }: Props) {
 
         <DialogFooter>
           <Button
-            onClick={() => create.mutate()}
+            onClick={submit}
             disabled={!name.trim() || create.isPending}
           >
             Create

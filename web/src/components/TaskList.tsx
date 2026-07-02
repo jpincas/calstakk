@@ -8,6 +8,7 @@ import { isBefore, isToday, startOfDay, addDays } from 'date-fns'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { caldav } from '@/api'
 import { parseCalDate, fmtDateShort, toIcalDate } from '@/lib/dates'
+import { withOptimism, patchList } from '@/lib/optimistic'
 import { toast } from 'sonner'
 import {
   CheckCircle2, Circle, ChevronDown, ChevronUp, Plus, Trash2, Check, X, Sun, CalendarClock,
@@ -44,7 +45,6 @@ interface TodoRowProps {
   accentColor: string
   readOnly: boolean
   onToggle: () => void
-  togglePending: boolean
   isEditingTitle: boolean
   editingValue: string
   isExpanded: boolean
@@ -55,7 +55,7 @@ interface TodoRowProps {
 }
 
 function TodoRow({
-  todo, accentColor, readOnly, onToggle, togglePending,
+  todo, accentColor, readOnly, onToggle,
   isEditingTitle, editingValue, isExpanded,
   onFirstClick, onEditValueChange, onEditBlur, onEditKeyDown,
 }: TodoRowProps) {
@@ -79,7 +79,7 @@ function TodoRow({
       onClick={!isEditingTitle ? onFirstClick : undefined}
     >
       <button
-        style={{ flexShrink: 0, background: 'none', border: 'none', cursor: readOnly ? 'default' : 'pointer', padding: 0, opacity: togglePending ? 0.5 : 1 }}
+        style={{ flexShrink: 0, background: 'none', border: 'none', cursor: readOnly ? 'default' : 'pointer', padding: 0 }}
         onClick={(e) => { e.stopPropagation(); if (!readOnly) onToggle() }}
       >
         {done
@@ -469,41 +469,65 @@ export function TaskList({ collection, accentColor, readOnly = false }: TaskList
 
   // ── Mutations ─────────────────────────────────────────────────────────────
 
+  const flipStatus = (s?: string) => (s === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED')
+
   const toggle = useMutation({
     mutationFn: (todo: Todo) =>
-      caldav.updateTodo(collection, { ...todo, status: todo.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['todos', collection] }),
-    onError: (e) => toast.error(String(e)),
+      caldav.updateTodo(collection, { ...todo, status: flipStatus(todo.status) }),
+    ...withOptimism<Todo>(qc, {
+      patches: (todo) => [
+        patchList<Todo>(['todos', collection], (todos) =>
+          todos.map((t) => (t.uid === todo.uid ? { ...t, status: flipStatus(t.status) } : t))),
+      ],
+    }),
   })
 
   const saveInlineNew = useMutation({
     mutationFn: ({ uid, summary, section_id }: { uid: string; summary: string; section_id?: string }) =>
       caldav.createTodo(collection, { uid, summary, status: 'NEEDS-ACTION', section_id }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['todos', collection] }),
-    onError: (e) => toast.error(String(e)),
+    ...withOptimism<{ uid: string; summary: string; section_id?: string }>(qc, {
+      patches: ({ uid, summary, section_id }) => [
+        patchList<Todo>(['todos', collection], (todos) => [
+          ...todos,
+          { uid, summary, status: 'NEEDS-ACTION', section_id, href: '' },
+        ]),
+      ],
+    }),
   })
 
   const updateTitle = useMutation({
     mutationFn: ({ todo, newSummary }: { todo: Todo; newSummary: string }) =>
       caldav.updateTodo(collection, { ...todo, summary: newSummary }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['todos', collection] }),
-    onError: (e) => toast.error(String(e)),
+    ...withOptimism<{ todo: Todo; newSummary: string }>(qc, {
+      patches: ({ todo, newSummary }) => [
+        patchList<Todo>(['todos', collection], (todos) =>
+          todos.map((t) => (t.uid === todo.uid ? { ...t, summary: newSummary } : t))),
+      ],
+    }),
   })
 
   const moveTodo = useMutation({
     mutationFn: ({ todo, to }: { todo: Todo; to: string }) => caldav.moveTodo(collection, to, todo),
-    onSuccess: (_, { to }) => {
-      void qc.invalidateQueries({ queryKey: ['todos', collection] })
-      void qc.invalidateQueries({ queryKey: ['todos', to] })
-      toast.success('Task moved')
-    },
-    onError: (e) => toast.error(String(e)),
+    ...withOptimism<{ todo: Todo; to: string }>(qc, {
+      patches: ({ todo, to }) => [
+        patchList<Todo>(['todos', collection], (todos) => todos.filter((t) => t.uid !== todo.uid)),
+        patchList<Todo>(['todos', to], (todos) => [
+          ...todos,
+          { ...todo, section_id: undefined, x_sort_order: undefined },
+        ]),
+      ],
+      onSuccess: () => toast.success('Task moved'),
+    }),
   })
 
   const setDue = useMutation({
     mutationFn: ({ todo, due }: { todo: Todo; due: string }) => caldav.updateTodo(collection, { ...todo, due }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['todos', collection] }),
-    onError: (e) => toast.error(String(e)),
+    ...withOptimism<{ todo: Todo; due: string }>(qc, {
+      patches: ({ todo, due }) => [
+        patchList<Todo>(['todos', collection], (todos) =>
+          todos.map((t) => (t.uid === todo.uid ? { ...t, due } : t))),
+      ],
+    }),
   })
 
   /** Used for all drag-related writes (x_sort_order and/or section_id). */
@@ -746,7 +770,6 @@ export function TaskList({ collection, accentColor, readOnly = false }: TaskList
     accentColor,
     readOnly,
     onToggle: () => toggle.mutate(todo),
-    togglePending: toggle.isPending,
     isEditingTitle: editingTodo?.uid === todo.uid,
     editingValue: editingTodo?.uid === todo.uid ? editingTodo.value : todo.summary,
     isExpanded: panelOpenUid === todo.uid,

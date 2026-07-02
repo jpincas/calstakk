@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { caldav } from '@/api'
+import { withOptimism, patchList } from '@/lib/optimistic'
 import { Trash2, Link } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Todo } from '@/types'
@@ -61,27 +62,37 @@ export function TodoEditPanel({ todo, collection, accentColor, readOnly = false,
   const [catInput, setCatInput] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['todos', collection] })
+  const editedTodo = (): Todo => ({
+    ...todo,
+    description: description.trim() || undefined,
+    due: due ? due.replace(/-/g, '') : undefined,
+    status,
+    priority: priority || undefined,
+    url: url.trim() || undefined,
+    categories: categories.length ? categories : undefined,
+  })
 
   const save = useMutation({
-    mutationFn: () =>
-      caldav.updateTodo(collection, {
-        ...todo,
-        description: description.trim() || undefined,
-        due: due ? due.replace(/-/g, '') : undefined,
-        status,
-        priority: priority || undefined,
-        url: url.trim() || undefined,
-        categories: categories.length ? categories : undefined,
-      }),
-    onSuccess: () => { void invalidate(); onClose(); toast.success('Saved') },
-    onError: (e) => toast.error(String(e)),
+    mutationFn: (updated: Todo) => caldav.updateTodo(collection, updated),
+    ...withOptimism<Todo>(qc, {
+      patches: (updated) => [
+        patchList<Todo>(['todos', collection], (todos) =>
+          todos.map((t) => (t.uid === updated.uid ? updated : t))),
+      ],
+      sideEffects: () => onClose(),
+      onSuccess: () => toast.success('Saved'),
+    }),
   })
 
   const del = useMutation({
     mutationFn: () => caldav.deleteTodo(collection, todo.uid),
-    onSuccess: () => { void invalidate(); onClose(); toast.success('Deleted') },
-    onError: (e) => toast.error(String(e)),
+    ...withOptimism<void>(qc, {
+      patches: () => [
+        patchList<Todo>(['todos', collection], (todos) => todos.filter((t) => t.uid !== todo.uid)),
+      ],
+      sideEffects: () => onClose(),
+      onSuccess: () => toast.success('Deleted'),
+    }),
   })
 
   const addCat = (v: string) => {
@@ -278,7 +289,7 @@ export function TodoEditPanel({ todo, collection, accentColor, readOnly = false,
           {!readOnly && (
             <button
               type="button"
-              onClick={() => save.mutate()}
+              onClick={() => save.mutate(editedTodo())}
               disabled={save.isPending}
               style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: accentColor, color: '#fff', fontSize: 16, fontWeight: 600, cursor: 'pointer', opacity: save.isPending ? 0.7 : 1 }}
             >

@@ -3,6 +3,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Link } from 'lucide-react'
 import { caldav } from '@/api'
+import { withOptimism, patchList } from '@/lib/optimistic'
+import type { Todo } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -62,25 +64,29 @@ export function NewTaskDialog({ collection, accentColor, open, onOpenChange }: P
 
   const reset = () => { setForm(emptyState()); setCatInput('') }
 
+  const newTodo = (): Omit<Todo, 'href'> => ({
+    uid: crypto.randomUUID(),
+    summary: form.summary,
+    description: form.description.trim() || undefined,
+    due: form.due ? form.due.replace(/-/g, '') : undefined,
+    status: form.status,
+    priority: form.priority || undefined,
+    url: form.url.trim() || undefined,
+    categories: form.categories.length ? form.categories : undefined,
+  })
+
   const create = useMutation({
-    mutationFn: () =>
-      caldav.createTodo(collection, {
-        uid: crypto.randomUUID(),
-        summary: form.summary,
-        description: form.description.trim() || undefined,
-        due: form.due ? form.due.replace(/-/g, '') : undefined,
-        status: form.status,
-        priority: form.priority || undefined,
-        url: form.url.trim() || undefined,
-        categories: form.categories.length ? form.categories : undefined,
-      }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['todos', collection] })
-      reset()
-      onOpenChange(false)
-      toast.success('Task created')
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
+    mutationFn: (todo: Omit<Todo, 'href'>) => caldav.createTodo(collection, todo),
+    ...withOptimism<Omit<Todo, 'href'>>(qc, {
+      patches: (todo) => [
+        patchList<Todo>(['todos', collection], (todos) => [...todos, { ...todo, href: '' }]),
+      ],
+      sideEffects: () => {
+        reset()
+        onOpenChange(false)
+      },
+      onSuccess: () => toast.success('Task created'),
+    }),
   })
 
   const addCat = (v: string) => {
@@ -229,7 +235,7 @@ export function NewTaskDialog({ collection, accentColor, open, onOpenChange }: P
 
         <DialogFooter>
           <Button
-            onClick={() => create.mutate()}
+            onClick={() => create.mutate(newTodo())}
             disabled={create.isPending || !form.summary.trim()}
             style={{ background: accentColor, color: '#fff', border: 'none' }}
           >

@@ -238,7 +238,8 @@ export function EventDialog({
       setScopeAsk({ kind: 'reset-warning', edits, scope: 'all' })
       return
     }
-    mutations.saveSeries.mutate({ col: colRef, master, edits }, { onSuccess: onClose })
+    mutations.saveSeries.mutate({ col: colRef, master, edits })
+    onClose()
   }
 
   const finishFutureSave = (edits: SeriesEdits) => {
@@ -249,7 +250,8 @@ export function EventDialog({
       setScopeAsk({ kind: 'reset-warning', edits, scope: 'future' })
       return
     }
-    mutations.saveFuture.mutate({ col: colRef, occ, edits }, { onSuccess: onClose })
+    mutations.saveFuture.mutate({ col: colRef, occ, edits })
+    onClose()
   }
 
   const seriesEdits = (): SeriesEdits => {
@@ -305,7 +307,8 @@ export function EventDialog({
           reminder: form.reminder && form.reminder !== 'custom' ? form.reminder : undefined,
           rrule: currentRrule ?? undefined,
         },
-      }, { onSuccess: onClose })
+      })
+      onClose()
       return
     }
     const occ = occurrence
@@ -327,15 +330,17 @@ export function EventDialog({
     setScopeAsk(null)
     if (ask?.kind === 'reset-warning') {
       if (ask.scope === 'future') {
-        mutations.saveFuture.mutate({ col: colRef, occ, edits: ask.edits }, { onSuccess: onClose })
+        mutations.saveFuture.mutate({ col: colRef, occ, edits: ask.edits })
       } else {
-        mutations.saveSeries.mutate({ col: colRef, master: occ.master, edits: ask.edits }, { onSuccess: onClose })
+        mutations.saveSeries.mutate({ col: colRef, master: occ.master, edits: ask.edits })
       }
+      onClose()
       return
     }
     if (ask?.kind === 'save-scope') {
       if (scope === 'this') {
-        mutations.saveOccurrence.mutate({ col: colRef, occ, edits: occurrenceEdits() }, { onSuccess: onClose })
+        mutations.saveOccurrence.mutate({ col: colRef, occ, edits: occurrenceEdits() })
+        onClose()
       } else if (scope === 'future') {
         finishFutureSave(futureEdits())
       } else {
@@ -344,9 +349,10 @@ export function EventDialog({
       return
     }
     if (ask?.kind === 'delete-scope') {
-      if (scope === 'this') mutations.deleteOccurrence.mutate({ col: colRef, occ }, { onSuccess: onClose })
-      else if (scope === 'future') mutations.deleteFuture.mutate({ col: colRef, occ }, { onSuccess: onClose })
-      else mutations.deleteSeries.mutate({ col: colRef, master: occ.master }, { onSuccess: onClose })
+      if (scope === 'this') mutations.deleteOccurrence.mutate({ col: colRef, occ })
+      else if (scope === 'future') mutations.deleteFuture.mutate({ col: colRef, occ })
+      else mutations.deleteSeries.mutate({ col: colRef, master: occ.master })
+      onClose()
     }
   }
 
@@ -701,7 +707,7 @@ export function EventDialog({
               <span style={{ fontSize: 15.5, color: 'var(--destructive)', fontWeight: 500 }}>Delete?</span>
               <button
                 type="button"
-                onClick={() => mutations.deleteSeries.mutate({ col: colRef, master: occurrence.master }, { onSuccess: onClose })}
+                onClick={() => { mutations.deleteSeries.mutate({ col: colRef, master: occurrence.master }); onClose() }}
                 disabled={pending}
                 style={{ padding: '3px 10px', borderRadius: 7, border: 'none', background: 'var(--destructive)', color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
               >
