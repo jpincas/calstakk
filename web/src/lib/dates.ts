@@ -1,4 +1,4 @@
-import { format, formatDistanceToNow, isToday, isYesterday } from 'date-fns'
+import { format, formatDistanceToNow, isSameWeek, isToday, isYesterday } from 'date-fns'
 
 /** Parse iCal date strings: YYYYMMDD, YYYYMMDDTHHmmss, YYYYMMDDTHHmmssZ, or ISO */
 export function parseCalDate(s: string): Date | null {
@@ -89,6 +89,20 @@ export function fmtAgo(d: Date | string | null | undefined): string {
     if (!date || isNaN(date.getTime())) return ''
     return formatDistanceToNow(date, { addSuffix: true })
   } catch { return '' }
+}
+
+/**
+ * Calendar route for jumping to an event: today opens the day view, this
+ * week the week view, anything else the month view — always at the event's
+ * date. Weeks start Monday, matching the event bucketing.
+ */
+export function calendarLinkFor(start: Date): string {
+  const view = isToday(start)
+    ? 'day'
+    : isSameWeek(start, new Date(), { weekStartsOn: 1 })
+    ? 'week'
+    : 'month'
+  return `/calendar?date=${format(start, 'yyyy-MM-dd')}&view=${view}`
 }
 
 export function isOverdue(due: string | undefined): boolean {

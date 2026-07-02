@@ -8,8 +8,10 @@
 //   ["ical", username, calName, icalUID]        → uid
 //   ["log", username, calName, token: number]   → LogEntry
 //   ["inbox", username, uid]                    → StoredInboxItem
+//   ["grant", owner, calName, sharee]           → SharingAccess
+//   ["sgrant", sharee, owner, calName]          → SharingAccess (sharee → grants index)
 
-import type { User } from "./types.ts";
+import type { SharingAccess, SharingGrant, User } from "./types.ts";
 import type { Calendar, CalendarObject, InboxItem, Storage, SyncChange, SyncResult } from "./storage.ts";
 import { computeETag } from "./storage.ts";
 
@@ -55,6 +57,8 @@ function objKey(username: string, calName: string, uid: string): Deno.KvKey { re
 function icalKey(username: string, calName: string, icalUID: string): Deno.KvKey { return ["ical", username, calName, icalUID]; }
 function logKey(username: string, calName: string, token: number): Deno.KvKey { return ["log", username, calName, token]; }
 function inboxKey(username: string, uid: string): Deno.KvKey { return ["inbox", username, uid]; }
+function grantKey(owner: string, calName: string, sharee: string): Deno.KvKey { return ["grant", owner, calName, sharee]; }
+function sgrantKey(sharee: string, owner: string, calName: string): Deno.KvKey { return ["sgrant", sharee, owner, calName]; }
 
 function tokenStr(n: number): string { return String(n); }
 
@@ -148,8 +152,60 @@ export class KVStorage implements Storage {
     for await (const e of this.kv.list({ prefix: ["ical", username] })) await this.kv.delete(e.key);
     for await (const e of this.kv.list({ prefix: ["log", username] })) await this.kv.delete(e.key);
     for await (const e of this.kv.list({ prefix: ["inbox", username] })) await this.kv.delete(e.key);
+    // Grants owned by the user (and their sharee-side index entries)
+    for await (const e of this.kv.list<SharingAccess>({ prefix: ["grant", username] })) {
+      const [, owner, calName, sharee] = e.key as [string, string, string, string];
+      await this.kv.delete(e.key);
+      await this.kv.delete(sgrantKey(sharee, owner, calName));
+    }
+    // Grants where the user is the sharee (and their owner-side entries)
+    for await (const e of this.kv.list<SharingAccess>({ prefix: ["sgrant", username] })) {
+      const [, sharee, owner, calName] = e.key as [string, string, string, string];
+      await this.kv.delete(e.key);
+      await this.kv.delete(grantKey(owner, calName, sharee));
+    }
     if (email) await this.kv.delete(uemailKey(email));
     await this.kv.delete(userKey(username));
+  }
+
+  // ── Sharing grants ─────────────────────────────────────────────────────────
+
+  async getGrant(owner: string, calendar: string, sharee: string): Promise<SharingGrant | null> {
+    const entry = await this.kv.get<SharingAccess>(grantKey(owner, calendar, sharee));
+    if (!entry.value) return null;
+    return { owner, calendar, sharee, access: entry.value };
+  }
+
+  async listGrantsByCalendar(owner: string, calendar: string): Promise<SharingGrant[]> {
+    const results: SharingGrant[] = [];
+    for await (const e of this.kv.list<SharingAccess>({ prefix: ["grant", owner, calendar] })) {
+      const sharee = e.key[3] as string;
+      results.push({ owner, calendar, sharee, access: e.value });
+    }
+    return results;
+  }
+
+  async listGrantsForSharee(sharee: string): Promise<SharingGrant[]> {
+    const results: SharingGrant[] = [];
+    for await (const e of this.kv.list<SharingAccess>({ prefix: ["sgrant", sharee] })) {
+      const [, , owner, calendar] = e.key as [string, string, string, string];
+      results.push({ owner, calendar, sharee, access: e.value });
+    }
+    return results;
+  }
+
+  async setGrant(grant: SharingGrant): Promise<void> {
+    await this.kv.atomic()
+      .set(grantKey(grant.owner, grant.calendar, grant.sharee), grant.access)
+      .set(sgrantKey(grant.sharee, grant.owner, grant.calendar), grant.access)
+      .commit();
+  }
+
+  async removeGrant(owner: string, calendar: string, sharee: string): Promise<void> {
+    await this.kv.atomic()
+      .delete(grantKey(owner, calendar, sharee))
+      .delete(sgrantKey(sharee, owner, calendar))
+      .commit();
   }
 
   // ── Calendars ──────────────────────────────────────────────────────────────
@@ -182,6 +238,11 @@ export class KVStorage implements Storage {
     for await (const entry of this.kv.list({ prefix: ["obj", username, name] })) await this.kv.delete(entry.key);
     for await (const entry of this.kv.list({ prefix: ["ical", username, name] })) await this.kv.delete(entry.key);
     for await (const entry of this.kv.list({ prefix: ["log", username, name] })) await this.kv.delete(entry.key);
+    for await (const entry of this.kv.list({ prefix: ["grant", username, name] })) {
+      const sharee = entry.key[3] as string;
+      await this.kv.delete(entry.key);
+      await this.kv.delete(sgrantKey(sharee, username, name));
+    }
     await this.kv.delete(calKey(username, name));
   }
 

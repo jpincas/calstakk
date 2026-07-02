@@ -12,9 +12,9 @@ A private, self-hosted CalDAV/VTODO server + web UI. Goal: push the CalDAV (RFC 
 
 | Layer | Status |
 |---|---|
-| CalDAV server (`src/`) | ✅ Spec-complete. 524/524 conformance tests passing. |
-| JS/TS CalDAV client (`web/src/api/`) | ✅ Complete. Covers all operations the UI needs. |
-| Web UI (`web/src/`) | 🔨 Under active development. |
+| CalDAV server (`src/`) | ✅ Spec-complete, incl. multi-user sharing (RFC 3744 subset) + admin API. 562/562 conformance/API tests passing. |
+| JS/TS CalDAV client (`web/src/api/`) | ✅ Complete. Covers all operations the UI needs, incl. auth, sharing, admin. |
+| Web UI (`web/src/`) | 🔨 Under active development. Multi-user (login, sharing, user admin) shipped. |
 
 ---
 
@@ -56,9 +56,11 @@ Key source files (for reference only):
 - Object: `/calendars/{username}/{name}/{uid}.ics`
 - Inbox/Outbox: `/calendars/{username}/inbox`, `/calendars/{username}/outbox`
 
-### Auth
+### Auth & multi-user
 - No password set (default dev) → no credentials required, all requests are the owner.
-- `CALSTAKK_PASSWORD` set → HTTP Basic Auth enforced.
+- `CALSTAKK_PASSWORD` set → HTTP Basic Auth enforced; **all** users in storage can authenticate with their own passwords. To exercise the login flow / multi-user in dev, set `CALSTAKK_PASSWORD` in `.env.local`.
+- Exactly one admin: the configured owner. Only the admin manages accounts (`/api/users` — create, delete, reset password). `/api/me` returns the authenticated identity.
+- **Sharing** (RFC 3744 subset): owners grant `read` or `read+write` on a collection via the `ACL` method; grants surface through `DAV:owner`, `DAV:acl`, `DAV:current-user-privilege-set`, and sharees discover shared collections via extra hrefs in their `calendar-home-set`. Principal search: `principal-property-search` REPORT on `/principals`. Collection create/delete and ACL changes stay owner-only.
 
 ---
 
@@ -102,10 +104,24 @@ const collections = await caldav.listCollections()
 - `caldav.syncCollection(collection, syncToken?)` → `SyncResult<T>`
 - `caldav.queryFreeBusy(from, to)` → `FreeBusySlot[]`
 
+**Multi-user / sharing / admin operations:**
+- `caldav.configure(creds | null)` — set/clear Basic auth credentials (used by the login flow; see `web/src/state/auth.ts`)
+- `caldav.whoami()` → `Me` (`GET /api/me`; 401 = login required)
+- `caldav.searchUsers(query)` → `PrincipalMatch[]` (RFC 3744 principal-property-search)
+- `caldav.getSharees(ref)` / `caldav.setSharees(ref, sharees)` — read/replace a collection's grants (DAV:acl property / ACL method)
+- `caldav.listUsers()` / `createUser` / `updateUser` / `deleteUser` — admin-only, `/api/users`
+
+**Collection identity:** every collection has a `ref` — the plain `name` for own
+collections, `owner~name` for collections shared by another user. All client
+methods, routes (`/:collection`), and query keys use refs. `Collection.myAccess`
+(`owner | read-write | read`) drives UI gating; `read` collections must not be
+offered mutations.
+
 **Types** — defined in `web/src/types/index.ts`:
-- `Collection` — `name`, `displayName`, `href`, `color?`, `description?`
+- `Collection` — `name`, `display_name`, `href`, `ref`, `owner`, `shared`, `myAccess`, `sharedWith?`, `color?`, `description?`, `order?`, `group?`
 - `CalEvent` — standard VEVENT fields (uid, summary, start, end, description, location, status, rrule, all_day, href)
 - `Todo` — standard VTODO fields (uid, summary, description, due, status, priority, related_to, categories, href)
+- `Me`, `UserAccount`, `Sharee`, `PrincipalMatch` — identity/sharing/admin types
 
 All datetimes are iCal compact strings (`20260101T090000Z`). Use `web/src/lib/dates.ts` for display formatting.
 
@@ -118,12 +134,17 @@ web/src/
   main.tsx                        ← React entry, routing
   pages/
     calendar.tsx                  ← Calendar/events page
-    todos.tsx                     ← Todos page
+    todos.tsx                     ← Inbox (capture) page
+    today.tsx / tasks.tsx         ← Aggregate views
+    project.tsx                   ← Per-collection page (rename, settings, share)
+    login.tsx                     ← Sign-in (Basic auth)
+    users.tsx                     ← Admin: user management
   components/
+    TaskList.tsx                  ← Task list (readOnly-aware)
+    ShareDialog.tsx               ← Collection sharing dialog (owner only)
     layout/
-      AppShell.tsx                ← Root layout, loads collections
-      CollectionSidebar.tsx       ← Left sidebar, collection list
-      DataTypeTabs.tsx            ← Calendar / Todos tab switcher
+      AppShell.tsx                ← Root layout, auth gate, loads collections
+      CollectionSidebar.tsx       ← Left sidebar, collections + shared-with-me + account footer
     ui/                           ← shadcn primitives (don't edit directly)
   api/                            ← CalDAV client (see above)
   lib/
@@ -131,7 +152,8 @@ web/src/
     colors.ts                     ← Colour utilities
     utils.ts                      ← Misc utilities
   state/
-    collection.ts                 ← Collection state
+    collection.ts                 ← Collection UI state (per-user, cleared on user switch)
+    auth.ts                       ← Session persistence (localStorage) + client wiring
   types/
     index.ts                      ← Shared TypeScript types
 ```
@@ -147,7 +169,10 @@ web/src/
 **Open the app at http://localhost:5173/app/** — that's the Vite dev server with
 hot reload. It starts both processes on fixed ports, clears any stale servers
 first (no zombies, no port drift), and tears both down on exit. Run it as a
-background task. No auth in dev (no `CALSTAKK_PASSWORD` set).
+background task. No auth in dev (no `CALSTAKK_PASSWORD` set) — the UI skips the
+login screen. To exercise login/multi-user, set `CALSTAKK_PASSWORD` in `.env.local`
+and re-run; `deno task seed` creates extra users `anna`/`anna` and `ben`/`ben`
+plus shares in both directions.
 
 Do **not** open **:5232/app/** for UI work — that's the backend serving the last
 *built* bundle (`web/dist`), with no hot reload. That mode is `deno task start`,

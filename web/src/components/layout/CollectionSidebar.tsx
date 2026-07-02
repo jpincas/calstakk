@@ -1,12 +1,17 @@
+import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Eye, EyeOff, Crosshair, User, Moon, Sun, Inbox, CalendarDays, ListTodo } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { Eye, EyeOff, Crosshair, User, Moon, Sun, Inbox, CalendarDays, ListTodo, Users, LogOut } from 'lucide-react'
 import { useDroppable } from '@dnd-kit/core'
-import type { Collection, ViewMode } from '@/types'
+import type { Collection, Me, ViewMode } from '@/types'
 import { useCollectionStore } from '@/state/collection'
+import { clearSession, hasSession } from '@/state/auth'
 import { collectionColor } from '@/lib/colors'
+import { UserAvatar } from '@/components/UserAvatar'
 
 interface Props {
   collections: Collection[]
+  me: Me | null
 }
 
 type NavItem = {
@@ -39,9 +44,11 @@ interface CollectionRowProps {
 function CollectionRow({
   col, dotColor, isActive, isHidden, isFocused, isCalendarMode, onRowClick, onFocus, onToggleHidden,
 }: CollectionRowProps) {
+  const readOnly = col.myAccess === 'read'
   const { setNodeRef, isOver } = useDroppable({
-    id: `collection:${col.name}`,
-    data: { type: 'collection', name: col.name },
+    id: `collection:${col.ref}`,
+    data: { type: 'collection', name: col.ref, readOnly },
+    disabled: readOnly,
   })
 
   return (
@@ -84,6 +91,13 @@ function CollectionRow({
         {col.display_name}
       </span>
 
+      {readOnly && (
+        <Eye
+          style={{ width: 12, height: 12, flexShrink: 0, color: 'var(--ui-text-muted)' }}
+          aria-label="Read-only"
+        />
+      )}
+
       {isCalendarMode && (
         <div
           className="sidebar-row-actions"
@@ -113,17 +127,18 @@ function CollectionRow({
   )
 }
 
-export function CollectionSidebar({ collections }: Props) {
+export function CollectionSidebar({ collections, me }: Props) {
   const {
     activeCollection, viewMode, hiddenCollections, focusedCollection, theme,
     setCollection, setViewMode, toggleCollectionHidden, setFocusedCollection, toggleTheme,
   } = useCollectionStore()
   const navigate = useNavigate()
   const location = useLocation()
-  const names = collections.map((c) => c.name)
+  const qc = useQueryClient()
+  const names = collections.map((c) => c.ref)
 
   const isCalendarMode = viewMode === 'calendar' || location.pathname.startsWith('/calendar')
-  const visible = collections.filter((c) => c.name !== 'capture')
+  const visible = collections.filter((c) => c.ref !== 'capture')
 
   const activeMode = NAV_ITEMS.find((item) =>
     location.pathname.startsWith(item.path)
@@ -135,14 +150,23 @@ export function CollectionSidebar({ collections }: Props) {
   }
 
   const handleRowClick = (col: Collection) => {
-    setCollection(col.name)
-    void navigate(`/${col.name}`)
+    setCollection(col.ref)
+    void navigate(`/${col.ref}`)
   }
 
-  // Build grouped structure: ungrouped first, then each group alphabetically
-  const ungrouped = visible.filter((c) => !c.group)
+  const logout = () => {
+    clearSession()
+    qc.clear()
+    void navigate('/login')
+  }
+
+  // Build grouped structure: ungrouped first, then each group alphabetically.
+  // Collections shared by other users always live under "Shared with me".
+  const own = visible.filter((c) => !c.shared)
+  const sharedWithMe = visible.filter((c) => c.shared)
+  const ungrouped = own.filter((c) => !c.group)
   const groupMap = new Map<string, Collection[]>()
-  for (const col of visible.filter((c) => c.group)) {
+  for (const col of own.filter((c) => c.group)) {
     const g = col.group!
     if (!groupMap.has(g)) groupMap.set(g, [])
     groupMap.get(g)!.push(col)
@@ -150,19 +174,19 @@ export function CollectionSidebar({ collections }: Props) {
   const sortedGroups = [...groupMap.keys()].sort()
 
   const renderRow = (col: Collection) => {
-    const color = collectionColor(names, col.name)
+    const color = collectionColor(names, col.ref)
     return (
       <CollectionRow
-        key={col.name}
+        key={col.ref}
         col={col}
         dotColor={col.color ?? color.bg}
-        isActive={activeCollection === col.name}
-        isHidden={hiddenCollections.includes(col.name)}
-        isFocused={focusedCollection === col.name}
+        isActive={activeCollection === col.ref}
+        isHidden={hiddenCollections.includes(col.ref)}
+        isFocused={focusedCollection === col.ref}
         isCalendarMode={isCalendarMode}
         onRowClick={() => handleRowClick(col)}
-        onFocus={() => setFocusedCollection(col.name)}
-        onToggleHidden={() => toggleCollectionHidden(col.name)}
+        onFocus={() => setFocusedCollection(col.ref)}
+        onToggleHidden={() => toggleCollectionHidden(col.ref)}
       />
     )
   }
@@ -239,6 +263,23 @@ export function CollectionSidebar({ collections }: Props) {
             </div>
           ))}
 
+          {sharedWithMe.length > 0 && (
+            <div>
+              <div style={{ padding: '10px 10px 4px' }}>
+                <span style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  color: 'var(--muted-foreground)',
+                }}>
+                  Shared with me
+                </span>
+              </div>
+              {sharedWithMe.map(renderRow)}
+            </div>
+          )}
+
           {visible.length === 0 && (
             <p style={{ padding: '8px 10px', fontSize: 16, color: 'var(--ui-text-muted)' }}>
               No projects yet.
@@ -247,20 +288,55 @@ export function CollectionSidebar({ collections }: Props) {
         </div>
       </div>
 
-      {/* Footer */}
-      <div
-        style={{
-          borderTop: '1px solid var(--sidebar-border)',
-          padding: '10px 8px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-        }}
-      >
+      {/* Footer: account + utilities (icons reveal on hover, like row actions) */}
+      <AccountFooter
+        me={me}
+        theme={theme}
+        onUsers={() => void navigate('/users')}
+        usersActive={location.pathname.startsWith('/users')}
+        onLogout={logout}
+        onToggleTheme={toggleTheme}
+      />
+    </aside>
+  )
+}
+
+function AccountFooter({
+  me,
+  theme,
+  onUsers,
+  usersActive,
+  onLogout,
+  onToggleTheme,
+}: {
+  me: Me | null
+  theme: 'light' | 'dark'
+  onUsers: () => void
+  usersActive: boolean
+  onLogout: () => void
+  onToggleTheme: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  const showIcons = hovered || usersActive
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        borderTop: '1px solid var(--sidebar-border)',
+        padding: '10px 10px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 9,
+      }}
+    >
+      {me ? (
+        <UserAvatar username={me.username} displayName={me.displayName} size={28} />
+      ) : (
         <div
           style={{
-            width: 26,
-            height: 26,
+            width: 28,
+            height: 28,
             borderRadius: '50%',
             background: 'var(--sidebar-accent)',
             display: 'flex',
@@ -271,50 +347,97 @@ export function CollectionSidebar({ collections }: Props) {
         >
           <User style={{ width: 14, height: 14, color: 'var(--sidebar-foreground)' }} />
         </div>
-        <span
-          style={{
-            fontSize: 16,
-            fontWeight: 500,
-            color: 'var(--sidebar-foreground)',
-            flex: 1,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          Account
-        </span>
-        <button
-          onClick={toggleTheme}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 26,
-            height: 26,
-            borderRadius: 6,
-            border: 'none',
-            background: 'transparent',
-            color: 'var(--ui-text-muted)',
-            cursor: 'pointer',
-            transition: 'color 100ms, background 100ms',
-            flexShrink: 0,
-          }}
-          onMouseEnter={(e) => {
-            ;(e.currentTarget as HTMLElement).style.color = 'var(--sidebar-primary)'
-            ;(e.currentTarget as HTMLElement).style.background = 'var(--sidebar-accent)'
-          }}
-          onMouseLeave={(e) => {
-            ;(e.currentTarget as HTMLElement).style.color = 'var(--ui-text-muted)'
-            ;(e.currentTarget as HTMLElement).style.background = 'transparent'
-          }}
+      )}
+      <span
+        title={me ? `Signed in as ${me.username}` : undefined}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          fontSize: 15,
+          fontWeight: 600,
+          color: 'var(--sidebar-foreground)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {me?.displayName || me?.username || 'Account'}
+      </span>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 2,
+          maxWidth: showIcons ? 120 : 0,
+          overflow: 'hidden',
+          opacity: showIcons ? 1 : 0,
+          pointerEvents: showIcons ? 'auto' : 'none',
+          transition: 'opacity 120ms, max-width 160ms ease',
+          flexShrink: 0,
+        }}
+      >
+        {me?.isAdmin && (
+          <FooterIconButton onClick={onUsers} title="Manage users" active={usersActive}>
+            <Users style={{ width: 14, height: 14 }} />
+          </FooterIconButton>
+        )}
+        {hasSession() && (
+          <FooterIconButton onClick={onLogout} title="Sign out">
+            <LogOut style={{ width: 14, height: 14 }} />
+          </FooterIconButton>
+        )}
+        <FooterIconButton
+          onClick={onToggleTheme}
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
           {theme === 'dark'
             ? <Sun style={{ width: 14, height: 14 }} />
             : <Moon style={{ width: 14, height: 14 }} />}
-        </button>
+        </FooterIconButton>
       </div>
-    </aside>
+    </div>
+  )
+}
+
+function FooterIconButton({
+  onClick,
+  title,
+  active = false,
+  children,
+}: {
+  onClick: () => void
+  title: string
+  active?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 26,
+        height: 26,
+        borderRadius: 6,
+        border: 'none',
+        background: active ? 'var(--sidebar-accent)' : 'transparent',
+        color: active ? 'var(--sidebar-primary)' : 'var(--ui-text-muted)',
+        cursor: 'pointer',
+        transition: 'color 100ms, background 100ms',
+        flexShrink: 0,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.color = 'var(--sidebar-primary)'
+        e.currentTarget.style.background = 'var(--sidebar-accent)'
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.color = active ? 'var(--sidebar-primary)' : 'var(--ui-text-muted)'
+        e.currentTarget.style.background = active ? 'var(--sidebar-accent)' : 'transparent'
+      }}
+    >
+      {children}
+    </button>
   )
 }

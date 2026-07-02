@@ -8,11 +8,13 @@ interface CollectionState {
   hiddenCollections: string[]
   focusedCollection: string | null
   theme: 'light' | 'dark'
+  showTasksOnCalendar: boolean
   setCollection: (name: string) => void
   setViewMode: (mode: ViewMode) => void
   toggleCollectionHidden: (name: string) => void
   setFocusedCollection: (name: string | null) => void
   toggleTheme: () => void
+  toggleShowTasksOnCalendar: () => void
 }
 
 export const useCollectionStore = create<CollectionState>()(
@@ -23,6 +25,7 @@ export const useCollectionStore = create<CollectionState>()(
       hiddenCollections: [],
       focusedCollection: null,
       theme: 'light',
+      showTasksOnCalendar: true,
       setCollection: (name) => set({ activeCollection: name }),
       setViewMode: (mode) => set({ viewMode: mode }),
       toggleCollectionHidden: (name) =>
@@ -35,6 +38,7 @@ export const useCollectionStore = create<CollectionState>()(
       setFocusedCollection: (name) =>
         set((s) => ({ focusedCollection: s.focusedCollection === name ? null : name })),
       toggleTheme: () => set((s) => ({ theme: s.theme === 'light' ? 'dark' : 'light' })),
+      toggleShowTasksOnCalendar: () => set((s) => ({ showTasksOnCalendar: !s.showTasksOnCalendar })),
     }),
     { name: 'calstakk-collection' }
   )

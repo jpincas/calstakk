@@ -21,3 +21,10 @@ export function collectionColor(collections: string[], name: string): Collection
   const idx = collections.indexOf(name)
   return PALETTE[Math.max(0, idx) % PALETTE.length]
 }
+
+/** Stable per-user colour from the shared palette (hashed so it survives reordering). */
+export function userColor(username: string): string {
+  let h = 0
+  for (let i = 0; i < username.length; i++) h = (h * 31 + username.charCodeAt(i)) >>> 0
+  return PALETTE[h % PALETTE.length].bg
+}

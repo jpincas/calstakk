@@ -17,18 +17,18 @@ export function TasksPage() {
     queryFn: () => caldav.listCollections(),
   })
 
-  const visible = collections.filter((c) => c.name !== 'capture')
-  const names   = collections.map((c) => c.name)
+  const visible = collections.filter((c) => c.ref !== 'capture')
+  const names   = collections.map((c) => c.ref)
 
   const todoQueries = useQueries({
     queries: visible.map((c) => ({
-      queryKey: ['todos', c.name],
-      queryFn:  () => caldav.listTodos(c.name),
+      queryKey: ['todos', c.ref],
+      queryFn:  () => caldav.listTodos(c.ref),
     })),
   })
 
   const projects = visible.map((col, i) => {
-    const color = col.color ?? collectionColor(names, col.name).bg
+    const color = col.color ?? collectionColor(names, col.ref).bg
     const todos: Todo[] = (todoQueries[i]?.data ?? [])
 
     const active = todos
@@ -64,13 +64,13 @@ export function TasksPage() {
         >
           {projects.map(({ col, color, active, total }) => (
             <ProjectCard
-              key={col.name}
+              key={col.ref}
               col={col}
               color={color}
               active={active}
               total={total}
               now={now}
-              onNavigate={() => { void navigate(`/${col.name}`) }}
+              onNavigate={() => { void navigate(`/${col.ref}`) }}
             />
           ))}
         </div>

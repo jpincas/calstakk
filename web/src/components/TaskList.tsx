@@ -33,6 +33,8 @@ import type { Todo, Section, Collection } from '@/types'
 export interface TaskListProps {
   collection: string
   accentColor: string
+  /** True when the collection is shared with read access only — hide/disable every mutation affordance. */
+  readOnly?: boolean
 }
 
 // ── TodoRow (module-level to prevent remount on parent re-render) ─────────────
@@ -40,6 +42,7 @@ export interface TaskListProps {
 interface TodoRowProps {
   todo: Todo
   accentColor: string
+  readOnly: boolean
   onToggle: () => void
   togglePending: boolean
   isEditingTitle: boolean
@@ -52,7 +55,7 @@ interface TodoRowProps {
 }
 
 function TodoRow({
-  todo, accentColor, onToggle, togglePending,
+  todo, accentColor, readOnly, onToggle, togglePending,
   isEditingTitle, editingValue, isExpanded,
   onFirstClick, onEditValueChange, onEditBlur, onEditKeyDown,
 }: TodoRowProps) {
@@ -76,8 +79,8 @@ function TodoRow({
       onClick={!isEditingTitle ? onFirstClick : undefined}
     >
       <button
-        style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: 0, opacity: togglePending ? 0.5 : 1 }}
-        onClick={(e) => { e.stopPropagation(); onToggle() }}
+        style={{ flexShrink: 0, background: 'none', border: 'none', cursor: readOnly ? 'default' : 'pointer', padding: 0, opacity: togglePending ? 0.5 : 1 }}
+        onClick={(e) => { e.stopPropagation(); if (!readOnly) onToggle() }}
       >
         {done
           ? <CheckCircle2 style={{ width: 16, height: 16, color: '#10B981' }} />
@@ -130,6 +133,7 @@ function SortableTodoRow({ containerId, ...rowProps }: TodoRowProps & { containe
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: rowProps.todo.uid,
     data: { type: 'task', containerId },
+    disabled: rowProps.readOnly,
   })
   return (
     <div
@@ -182,7 +186,8 @@ interface TaskContextMenuProps {
 }
 
 function TaskContextMenu({ children, collections, currentCollection, onMove }: TaskContextMenuProps) {
-  const targets = collections.filter((c) => c.name !== currentCollection && c.name !== 'inbox')
+  // Move targets must be writable — moving into a read-only shared collection would 403.
+  const targets = collections.filter((c) => c.ref !== currentCollection && c.ref !== 'inbox' && c.myAccess !== 'read')
   return (
     <ContextMenu>
       <ContextMenuTrigger style={{ display: 'block' }}>{children}</ContextMenuTrigger>
@@ -194,7 +199,7 @@ function TaskContextMenu({ children, collections, currentCollection, onMove }: T
               <div style={{ padding: '6px 8px', fontSize: 16, color: 'var(--muted-foreground)' }}>No other lists</div>
             ) : (
               targets.map((c) => (
-                <ContextMenuItem key={c.name} onSelect={() => onMove(c.name)}>
+                <ContextMenuItem key={c.ref} onSelect={() => onMove(c.ref)}>
                   {c.display_name}
                 </ContextMenuItem>
               ))
@@ -248,6 +253,7 @@ function SectionBucket({ tasks, renderRow }: SectionBucketProps) {
 interface SectionHeaderProps {
   section: Section
   taskCount: number
+  readOnly: boolean
   isFirst: boolean
   isLast: boolean
   onMoveUp: () => void
@@ -263,7 +269,7 @@ interface SectionHeaderProps {
 }
 
 function SectionHeader({
-  section, taskCount, isFirst, isLast,
+  section, taskCount, readOnly, isFirst, isLast,
   onMoveUp, onMoveDown, onDelete, onAdd,
   isEditing, editValue, onStartEdit, onEditChange, onEditCommit, onEditCancel,
 }: SectionHeaderProps) {
@@ -322,8 +328,8 @@ function SectionHeader({
       ) : (
         <>
           <span
-            style={{ fontSize: 16, fontWeight: 600, color: 'var(--foreground)', cursor: 'text', flex: 1, lineHeight: '18px' }}
-            onClick={onStartEdit}
+            style={{ fontSize: 16, fontWeight: 600, color: 'var(--foreground)', cursor: readOnly ? 'default' : 'text', flex: 1, lineHeight: '18px' }}
+            onClick={readOnly ? undefined : onStartEdit}
           >
             {section.name}
           </span>
@@ -332,12 +338,14 @@ function SectionHeader({
               {taskCount}
             </span>
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 0, opacity: hovered ? 1 : 0, transition: 'opacity 120ms', pointerEvents: hovered ? 'auto' : 'none' }}>
-            {!isFirst && iconBtn(onMoveUp, 'Move section up', <ChevronUp style={{ width: 13, height: 13 }} />)}
-            {!isLast && iconBtn(onMoveDown, 'Move section down', <ChevronDown style={{ width: 13, height: 13 }} />)}
-            {iconBtn(onAdd, 'Add task to section', <Plus style={{ width: 13, height: 13 }} />)}
-            {iconBtn(onDelete, 'Delete section', <Trash2 style={{ width: 13, height: 13 }} />, true)}
-          </div>
+          {!readOnly && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 0, opacity: hovered ? 1 : 0, transition: 'opacity 120ms', pointerEvents: hovered ? 'auto' : 'none' }}>
+              {!isFirst && iconBtn(onMoveUp, 'Move section up', <ChevronUp style={{ width: 13, height: 13 }} />)}
+              {!isLast && iconBtn(onMoveDown, 'Move section down', <ChevronDown style={{ width: 13, height: 13 }} />)}
+              {iconBtn(onAdd, 'Add task to section', <Plus style={{ width: 13, height: 13 }} />)}
+              {iconBtn(onDelete, 'Delete section', <Trash2 style={{ width: 13, height: 13 }} />, true)}
+            </div>
+          )}
         </>
       )}
     </div>
@@ -346,7 +354,7 @@ function SectionHeader({
 
 // ── TaskList ──────────────────────────────────────────────────────────────────
 
-export function TaskList({ collection, accentColor }: TaskListProps) {
+export function TaskList({ collection, accentColor, readOnly = false }: TaskListProps) {
   const qc = useQueryClient()
 
   // ── Queries ───────────────────────────────────────────────────────────────
@@ -552,10 +560,12 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
 
   const handleDragEnd = useCallback(({ active: dragActive, over }: DragEndEvent) => {
     setActiveDragId(null)
+    if (readOnly) return // sortables are disabled too; belt and braces
     if (!over) return
     if (dragActive.data.current?.type !== 'task') return
 
     if (over.data.current?.type === 'collection') {
+      if (over.data.current.readOnly) return // target collection would 403 the move
       const targetCollection = over.data.current.name as string
       if (targetCollection === collection) return
       const curActive = optimisticActive ?? computedActive
@@ -652,7 +662,7 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
         }
       })
     }
-  }, [optimisticActive, computedActive, sections, getTaskBucket, dragUpdate, collection, moveTodo])
+  }, [optimisticActive, computedActive, sections, getTaskBucket, dragUpdate, collection, moveTodo, readOnly])
 
   // ── Inline-add handlers ───────────────────────────────────────────────────
 
@@ -678,6 +688,7 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
   }
 
   const handleBlankAreaClick = () => {
+    if (readOnly) return
     if (showInlineNew === 'ungrouped') inlineNewRef.current?.focus()
     else { setShowInlineNew('ungrouped'); setInlineNewValue('') }
   }
@@ -685,7 +696,8 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
   // ── Edit handlers ─────────────────────────────────────────────────────────
 
   const handleFirstClick = (todo: Todo) => {
-    setEditingTodo({ uid: todo.uid, value: todo.summary })
+    // Read-only: opening the detail panel is fine, inline title editing is not.
+    if (!readOnly) setEditingTodo({ uid: todo.uid, value: todo.summary })
     setPanelOpenUid(todo.uid)
   }
 
@@ -716,6 +728,7 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
   const rowProps = (todo: Todo): TodoRowProps => ({
     todo,
     accentColor,
+    readOnly,
     onToggle: () => toggle.mutate(todo),
     togglePending: toggle.isPending,
     isEditingTitle: editingTodo?.uid === todo.uid,
@@ -736,14 +749,20 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
         if (!e.currentTarget.contains(e.relatedTarget)) setPanelOpenUid(null)
       }}
     >
-      <TaskContextMenu collections={collections} currentCollection={collection} onMove={(to) => moveTodo.mutate({ todo, to })}>
+      {readOnly ? (
+        // The only context-menu entry ("Move to") mutates — skip the menu entirely.
         <SortableTodoRow {...rowProps(todo)} containerId={containerId} />
-      </TaskContextMenu>
+      ) : (
+        <TaskContextMenu collections={collections} currentCollection={collection} onMove={(to) => moveTodo.mutate({ todo, to })}>
+          <SortableTodoRow {...rowProps(todo)} containerId={containerId} />
+        </TaskContextMenu>
+      )}
       {panelOpenUid === todo.uid && (
         <TodoEditPanel
           todo={todo}
           collection={collection}
           accentColor={accentColor}
+          readOnly={readOnly}
           onClose={() => { setEditingTodo(null); setPanelOpenUid(null) }}
         />
       )}
@@ -796,6 +815,7 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
               <SectionHeader
                 section={section}
                 taskCount={(sectionedTasks[section.id] ?? []).length}
+                readOnly={readOnly}
                 isFirst={idx === 0}
                 isLast={idx === sections.length - 1}
                 onMoveUp={() => moveSectionUp(section.id)}
@@ -837,6 +857,7 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
         </>
 
         {/* Add section */}
+        {!readOnly && (
         <div style={{ padding: '4px 10px 2px' }}>
           {showNewSection ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 0 4px' }}>
@@ -878,10 +899,11 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
             </button>
           )}
         </div>
+        )}
       </div>
 
       {/* Blank click-to-add area (clicks open ungrouped inline-add) */}
-      <div style={{ flex: 1, minHeight: 60, cursor: 'text' }} onClick={handleBlankAreaClick} />
+      <div style={{ flex: 1, minHeight: 60, cursor: readOnly ? 'default' : 'text' }} onClick={handleBlankAreaClick} />
 
       {/* Completed group (global, not sectioned) */}
       {completed.length > 0 && (
@@ -909,14 +931,19 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
                     if (!e.currentTarget.contains(e.relatedTarget)) setPanelOpenUid(null)
                   }}
                 >
-                  <TaskContextMenu collections={collections} currentCollection={collection} onMove={(to) => moveTodo.mutate({ todo: t, to })}>
+                  {readOnly ? (
                     <TodoRow {...rowProps(t)} />
-                  </TaskContextMenu>
+                  ) : (
+                    <TaskContextMenu collections={collections} currentCollection={collection} onMove={(to) => moveTodo.mutate({ todo: t, to })}>
+                      <TodoRow {...rowProps(t)} />
+                    </TaskContextMenu>
+                  )}
                   {panelOpenUid === t.uid && (
                     <TodoEditPanel
                       todo={t}
                       collection={collection}
                       accentColor={accentColor}
+                      readOnly={readOnly}
                       onClose={() => { setEditingTodo(null); setPanelOpenUid(null) }}
                     />
                   )}

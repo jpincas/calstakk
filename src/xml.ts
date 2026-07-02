@@ -234,12 +234,22 @@ export interface SyncCollectionQuery {
   allProp: boolean;
 }
 
+export interface PrincipalPropertySearch {
+  /** Each entry: match text applied to the listed principal properties. Entries are AND-ed. */
+  searches: Array<{ props: PropName[]; match: string }>;
+  requestedProps: PropName[];
+  allProp: boolean;
+}
+
 export type ReportRequest =
   | { type: "calendar-query"; query: CalendarQuery }
   | { type: "calendar-multiget"; multiget: CalendarMultiget }
   | { type: "sync-collection"; sync: SyncCollectionQuery }
   | { type: "free-busy-query"; start: string; end: string }
   | { type: "expand-property" }
+  | { type: "principal-property-search"; search: PrincipalPropertySearch }
+  | { type: "principal-match"; requestedProps: PropName[]; allProp: boolean }
+  | { type: "principal-search-property-set" }
   | { type: "unknown" };
 
 function parseRequestedPropsX(root: XNode): { names: PropName[]; allProp: boolean } {
@@ -442,7 +452,90 @@ export function parseReport(body: string): ReportRequest {
     return { type: "expand-property" };
   }
 
+  if (root.local === "principal-property-search") {
+    const searches = findAll(root, NS_DAV, "property-search").map((ps) => {
+      const propEl = find(ps, NS_DAV, "prop");
+      const props: PropName[] = propEl ? propEl.children.map((c) => ({ ns: c.ns, local: c.local })) : [];
+      const matchEl = find(ps, NS_DAV, "match");
+      return { props, match: matchEl?.text.trim() ?? "" };
+    });
+    // Requested props: the D:prop that is a direct child of the report root
+    // (each D:property-search carries its own nested D:prop).
+    const topProp = find(root, NS_DAV, "prop");
+    const requestedProps: PropName[] = topProp ? topProp.children.map((c) => ({ ns: c.ns, local: c.local })) : [];
+    return { type: "principal-property-search", search: { searches, requestedProps, allProp: !topProp } };
+  }
+
+  if (root.local === "principal-match") {
+    const topProp = find(root, NS_DAV, "prop");
+    const requestedProps: PropName[] = topProp ? topProp.children.map((c) => ({ ns: c.ns, local: c.local })) : [];
+    return { type: "principal-match", requestedProps, allProp: !topProp };
+  }
+
+  if (root.local === "principal-search-property-set") {
+    return { type: "principal-search-property-set" };
+  }
+
   return { type: "unknown" };
+}
+
+// ─── ACL request parsing (RFC 3744 §8.1) ──────────────────────────────────────
+
+export interface AclAce {
+  principalType: "href" | "all" | "authenticated" | "unauthenticated" | "self" | "property" | "unknown";
+  principalHref: string | null; // set when principalType === "href"
+  invert: boolean;
+  deny: boolean;
+  privileges: PropName[];
+  isProtected: boolean;
+  inherited: boolean;
+}
+
+/** Parse a DAV:acl request body into its ACEs. Returns null if the body is not a DAV:acl element. */
+export function parseAcl(body: string): AclAce[] | null {
+  const root = parseXML(body);
+  if (!root || root.ns !== NS_DAV || root.local !== "acl") return null;
+
+  const aces: AclAce[] = [];
+  for (const aceEl of findAll(root, NS_DAV, "ace")) {
+    const invertEl = find(aceEl, NS_DAV, "invert");
+    const principalEl = invertEl ? find(invertEl, NS_DAV, "principal") : find(aceEl, NS_DAV, "principal");
+
+    let principalType: AclAce["principalType"] = "unknown";
+    let principalHref: string | null = null;
+    if (principalEl) {
+      const hrefEl = find(principalEl, NS_DAV, "href");
+      if (hrefEl) {
+        principalType = "href";
+        principalHref = hrefEl.text.trim();
+      } else if (find(principalEl, NS_DAV, "all")) principalType = "all";
+      else if (find(principalEl, NS_DAV, "authenticated")) principalType = "authenticated";
+      else if (find(principalEl, NS_DAV, "unauthenticated")) principalType = "unauthenticated";
+      else if (find(principalEl, NS_DAV, "self")) principalType = "self";
+      else if (find(principalEl, NS_DAV, "property")) principalType = "property";
+    }
+
+    const grantEl = find(aceEl, NS_DAV, "grant");
+    const denyEl = find(aceEl, NS_DAV, "deny");
+    const privileges: PropName[] = [];
+    const privContainer = grantEl ?? denyEl;
+    if (privContainer) {
+      for (const privEl of findAll(privContainer, NS_DAV, "privilege")) {
+        for (const child of privEl.children) privileges.push({ ns: child.ns, local: child.local });
+      }
+    }
+
+    aces.push({
+      principalType,
+      principalHref,
+      invert: invertEl !== undefined,
+      deny: denyEl !== undefined && grantEl === undefined,
+      privileges,
+      isProtected: find(aceEl, NS_DAV, "protected") !== undefined,
+      inherited: find(aceEl, NS_DAV, "inherited") !== undefined,
+    });
+  }
+  return aces;
 }
 
 // ─── iCalendar datetime parsing ───────────────────────────────────────────────

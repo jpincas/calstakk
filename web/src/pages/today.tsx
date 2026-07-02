@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
 import { format, isToday, isBefore, startOfDay } from 'date-fns'
+import { useNavigate } from 'react-router-dom'
 import { caldav } from '@/api'
 import { collectionColor } from '@/lib/colors'
-import { parseCalDate, fmtTime, fmtDateShort } from '@/lib/dates'
+import { calendarLinkFor, parseCalDate, fmtTime, fmtDateShort } from '@/lib/dates'
 import { Circle, CheckCircle2, Sun } from 'lucide-react'
 import { PageBar } from '@/components/layout/PageBar'
 import type { Collection, CalEvent, Todo } from '@/types'
@@ -64,6 +65,7 @@ type TodoMeta  = Todo      & { _colName: string; _colDisplayName: string; _colCo
 
 export function TodayPage() {
   const qc  = useQueryClient()
+  const navigate = useNavigate()
   const now = new Date()
   const todayLabel = format(now, 'EEEE, MMMM d')
 
@@ -88,27 +90,29 @@ export function TodayPage() {
     queryFn: () => caldav.listCollections(),
   })
 
-  const names          = collections.map((c) => c.name)
-  const calCollections = collections.filter((c) => c.name !== 'capture')
+  const names          = collections.map((c) => c.ref)
+  const calCollections = collections.filter((c) => c.ref !== 'capture')
+  // Read-only shared collections: no mutation affordances (server would 403).
+  const readOnlyRefs   = new Set(collections.filter((c) => c.myAccess === 'read').map((c) => c.ref))
 
   const eventQueries = useQueries({
     queries: calCollections.map((c) => ({
-      queryKey: ['events', c.name],
-      queryFn: () => caldav.listEvents(c.name),
+      queryKey: ['events', c.ref],
+      queryFn: () => caldav.listEvents(c.ref),
     })),
   })
 
   const todoQueries = useQueries({
     queries: collections.map((c) => ({
-      queryKey: ['todos', c.name],
-      queryFn: () => caldav.listTodos(c.name),
+      queryKey: ['todos', c.ref],
+      queryFn: () => caldav.listTodos(c.ref),
     })),
   })
 
   // ── Derived data ─────────────────────────────────────────────────────────────
   const todayEvents: EventMeta[] = calCollections
     .flatMap((col, i) => {
-      const color = collectionColor(names, col.name)
+      const color = collectionColor(names, col.ref)
       const data  = (eventQueries[i]?.data ?? [])
       return data
         .filter((e) => {
@@ -117,7 +121,7 @@ export function TodayPage() {
         })
         .map((e) => ({
           ...e,
-          _colName:        col.name,
+          _colName:        col.ref,
           _colDisplayName: col.display_name,
           _colColor:       col.color ?? color.bg,
         }))
@@ -126,7 +130,7 @@ export function TodayPage() {
 
   const todayTodos: TodoMeta[] = collections
     .flatMap((col, i) => {
-      const color = collectionColor(names, col.name)
+      const color = collectionColor(names, col.ref)
       const data  = (todoQueries[i]?.data ?? [])
       return data
         .filter((t) => {
@@ -138,7 +142,7 @@ export function TodayPage() {
         })
         .map((t) => ({
           ...t,
-          _colName:        col.name,
+          _colName:        col.ref,
           _colDisplayName: col.display_name,
           _colColor:       col.color ?? color.bg,
         }))
@@ -154,6 +158,9 @@ export function TodayPage() {
   const toggle = useMutation({
     mutationFn: ({ todo }: { todo: TodoMeta }) => {
       const { _colName, ...cleanTodo } = todo
+      // _colName carries the collection ref; read-only refs never reach here
+      // (the checkbox is inert) but block anyway — the server would 403.
+      if (readOnlyRefs.has(_colName)) return Promise.resolve()
       return caldav.updateTodo(_colName, {
         ...cleanTodo,
         status: cleanTodo.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED',
@@ -187,6 +194,7 @@ export function TodayPage() {
             {todayTodos.map((todo) => {
               const due     = todo.due ? parseCalDate(todo.due) : null
               const overdue = due ? isBefore(due, startOfDay(now)) && !isToday(due) : false
+              const ro      = readOnlyRefs.has(todo._colName)
               return (
                 <div
                   key={`${todo._colName}-${todo.uid}`}
@@ -202,8 +210,8 @@ export function TodayPage() {
                   onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
                 >
                   <button
-                    style={{ flexShrink: 0, marginTop: 1, background: 'none', border: 'none', cursor: 'pointer', padding: 0, opacity: toggle.isPending ? 0.5 : 1 }}
-                    onClick={() => toggle.mutate({ todo })}
+                    style={{ flexShrink: 0, marginTop: 1, background: 'none', border: 'none', cursor: ro ? 'default' : 'pointer', padding: 0, opacity: toggle.isPending ? 0.5 : 1 }}
+                    onClick={ro ? undefined : () => toggle.mutate({ todo })}
                   >
                     <Circle style={{ width: 16, height: 16, color: overdue ? 'var(--destructive)' : todo._colColor }} />
                   </button>
@@ -265,7 +273,9 @@ export function TodayPage() {
                     padding: '10px 10px',
                     borderRadius: 8,
                     transition: 'background 100ms',
+                    cursor: start ? 'pointer' : 'default',
                   }}
+                  onClick={start ? () => { void navigate(calendarLinkFor(start)) } : undefined}
                   onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--hover-bg)' }}
                   onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
                 >

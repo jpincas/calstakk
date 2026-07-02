@@ -22,6 +22,8 @@ interface Props {
   todo: Todo
   collection: string
   accentColor: string
+  /** True for read-only shared collections: fields disabled, no save/delete. */
+  readOnly?: boolean
   onClose: () => void
 }
 
@@ -48,7 +50,7 @@ const labelStyle: React.CSSProperties = {
   marginBottom: 4,
 }
 
-export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props) {
+export function TodoEditPanel({ todo, collection, accentColor, readOnly = false, onClose }: Props) {
   const qc = useQueryClient()
   const [description, setDescription] = useState(todo.description ?? '')
   const [due, setDue] = useState(icalToInput(todo.due))
@@ -106,8 +108,9 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
       <textarea
         value={description}
         onChange={(e) => setDescription(e.target.value)}
-        placeholder="Add notes…"
+        placeholder={readOnly ? undefined : 'Add notes…'}
         rows={2}
+        disabled={readOnly}
         style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }}
       />
 
@@ -115,11 +118,11 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
       <div style={{ display: 'flex', gap: 10 }}>
         <div style={{ flex: 1 }}>
           <span style={labelStyle}>Due</span>
-          <input type="date" value={due} onChange={(e) => setDue(e.target.value)} style={inputStyle} />
+          <input type="date" value={due} onChange={(e) => setDue(e.target.value)} disabled={readOnly} style={inputStyle} />
         </div>
         <div style={{ flex: 1 }}>
           <span style={labelStyle}>Status</span>
-          <select value={status} onChange={(e) => setStatus(e.target.value)} style={inputStyle}>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} disabled={readOnly} style={inputStyle}>
             <option value="NEEDS-ACTION">To do</option>
             <option value="IN-PROCESS">In progress</option>
             <option value="COMPLETED">Completed</option>
@@ -136,13 +139,14 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
             <button
               key={label}
               type="button"
+              disabled={readOnly}
               onClick={() => setPriority(value)}
               style={{
                 padding: '3px 10px',
                 borderRadius: 20,
                 fontSize: 14,
                 fontWeight: 500,
-                cursor: 'pointer',
+                cursor: readOnly ? 'default' : 'pointer',
                 transition: 'all 80ms',
                 border: `1px solid ${priority === value ? accentColor : 'var(--border)'}`,
                 background: priority === value ? accentColor : 'var(--background)',
@@ -169,7 +173,8 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
             type="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://…"
+            placeholder={readOnly ? undefined : 'https://…'}
+            disabled={readOnly}
             style={{ ...inputStyle, paddingLeft: 26 }}
           />
         </div>
@@ -198,13 +203,15 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
               }}
             >
               {cat}
-              <button
-                type="button"
-                onClick={() => setCategories(categories.filter((c) => c !== cat))}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'inherit', lineHeight: 1, fontSize: 17 }}
-              >
-                ×
-              </button>
+              {!readOnly && (
+                <button
+                  type="button"
+                  onClick={() => setCategories(categories.filter((c) => c !== cat))}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'inherit', lineHeight: 1, fontSize: 17 }}
+                >
+                  ×
+                </button>
+              )}
             </span>
           ))}
           <input
@@ -215,7 +222,8 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
               if (e.key === 'Backspace' && !catInput && categories.length) setCategories(categories.slice(0, -1))
             }}
             onBlur={() => catInput.trim() && addCat(catInput)}
-            placeholder={categories.length === 0 ? 'Add tags…' : ''}
+            disabled={readOnly}
+            placeholder={readOnly || categories.length > 0 ? '' : 'Add tags…'}
             style={{
               border: 'none', outline: 'none', background: 'transparent',
               fontSize: 16, color: 'var(--foreground)', fontFamily: 'inherit',
@@ -227,7 +235,9 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
 
       {/* Footer: delete left, cancel+save right */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 2 }}>
-        {confirmDelete ? (
+        {readOnly ? (
+          <span />
+        ) : confirmDelete ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 16, color: 'var(--destructive)', fontWeight: 500 }}>Delete?</span>
             <button
@@ -263,16 +273,18 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
             onClick={onClose}
             style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', fontSize: 16, cursor: 'pointer', color: 'var(--foreground)' }}
           >
-            Cancel
+            {readOnly ? 'Close' : 'Cancel'}
           </button>
-          <button
-            type="button"
-            onClick={() => save.mutate()}
-            disabled={save.isPending}
-            style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: accentColor, color: '#fff', fontSize: 16, fontWeight: 600, cursor: 'pointer', opacity: save.isPending ? 0.7 : 1 }}
-          >
-            Save
-          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={() => save.mutate()}
+              disabled={save.isPending}
+              style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: accentColor, color: '#fff', fontSize: 16, fontWeight: 600, cursor: 'pointer', opacity: save.isPending ? 0.7 : 1 }}
+            >
+              Save
+            </button>
+          )}
         </div>
       </div>
     </div>

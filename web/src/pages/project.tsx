@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { caldav } from '@/api'
-import { parseCalDate, fmtTime } from '@/lib/dates'
+import { calendarLinkFor, parseCalDate, fmtTime } from '@/lib/dates'
 import { collectionColor } from '@/lib/colors'
 import { useCollectionStore } from '@/state/collection'
 import { Button } from '@/components/ui/button'
@@ -16,9 +16,10 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { Settings, Plus } from 'lucide-react'
+import { Settings, Plus, Share2, Eye } from 'lucide-react'
 import { PageBar } from '@/components/layout/PageBar'
 import { TaskList } from '@/components/TaskList'
+import { ShareDialog } from '@/components/ShareDialog'
 import {
   format,
   isToday,
@@ -101,6 +102,7 @@ function getEventBucket(start: Date, today: Date): Bucket | null {
 export function ProjectPage() {
   const { collection: colName } = useParams<{ collection: string }>()
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const { setCollection } = useCollectionStore()
 
   // Sync active collection to store
@@ -113,6 +115,11 @@ export function ProjectPage() {
   const { data: collections = [] } = useQuery<Collection[]>({
     queryKey: ['collections'],
     queryFn: () => caldav.listCollections(),
+  })
+
+  const { data: me = null } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => caldav.whoami(),
   })
 
   const { data: todos = [] } = useQuery<Todo[]>({
@@ -129,8 +136,10 @@ export function ProjectPage() {
 
   // ── Derived data ─────────────────────────────────────────────────────────
 
-  const col = collections.find((c) => c.name === colName)
-  const names = collections.map((c) => c.name)
+  const col = collections.find((c) => c.ref === colName)
+  const names = collections.map((c) => c.ref)
+  const isOwner = !col || col.myAccess === 'owner'
+  const readOnly = col?.myAccess === 'read'
 
   const color = useMemo(() => {
     if (col?.color) return { bg: col.color, text: '#fff' }
@@ -193,6 +202,7 @@ export function ProjectPage() {
   const [isNarrow, setIsNarrow] = useState(false)
   const [activeTab, setActiveTab] = useState<'Tasks' | 'Events'>('Tasks')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
   const [settingColor, setSettingColor] = useState('')
   const [settingGroup, setSettingGroup] = useState('')
 
@@ -306,7 +316,7 @@ export function ProjectPage() {
   const TasksPane = (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
       <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <TaskList collection={colName} accentColor={color.bg} />
+        <TaskList collection={colName} accentColor={color.bg} readOnly={readOnly} />
       </div>
     </div>
   )
@@ -364,7 +374,12 @@ export function ProjectPage() {
                       gap: 12,
                       padding: '10px 16px',
                       borderBottom: '1px solid var(--border)',
+                      cursor: start ? 'pointer' : 'default',
+                      transition: 'background 100ms',
                     }}
+                    onClick={start ? () => { void navigate(calendarLinkFor(start)) } : undefined}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--hover-bg)' }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
                   >
                     {/* Date avatar */}
                     <div
@@ -471,16 +486,44 @@ export function ProjectPage() {
             />
           ) : (
             <span
-              onClick={() => { setNameInput(displayName); setEditingName(true) }}
-              style={{ cursor: 'text', color: 'inherit' }}
+              onClick={isOwner ? () => { setNameInput(displayName); setEditingName(true) } : undefined}
+              style={{ cursor: isOwner ? 'text' : 'default', color: 'inherit' }}
             >
               {displayName}
             </span>
           )
         }
-        detail={`${activeCount} active · ${completedCount} completed`}
+        detail={
+          <>
+            {`${activeCount} active · ${completedCount} completed`}
+            {col?.shared && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                {readOnly && <Eye style={{ width: 13, height: 13 }} />}
+                {readOnly ? 'Read-only · ' : ''}shared by {col.owner}
+              </span>
+            )}
+          </>
+        }
         controls={
           <>
+            {isOwner && col && (
+              <button
+                onClick={() => setShareOpen(true)}
+                title={col.sharedWith?.length ? `Shared with ${col.sharedWith.length}` : 'Share'}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 5,
+                  padding: '5px 10px', borderRadius: 7,
+                  border: '1px solid rgba(255,255,255,0.35)',
+                  background: 'transparent', color: 'rgba(255,255,255,0.85)',
+                  fontSize: 16, fontWeight: 600, cursor: 'pointer',
+                  height: 36,
+                }}
+              >
+                <Share2 style={{ width: 16, height: 16 }} />
+                {col.sharedWith && col.sharedWith.length > 0 ? col.sharedWith.length : null}
+              </button>
+            )}
+            {isOwner && (
             <button
               onClick={openSettings}
               style={{
@@ -493,6 +536,8 @@ export function ProjectPage() {
             >
               <Settings style={{ width: 18, height: 18 }} />
             </button>
+            )}
+            {!readOnly && (
             <button
               onClick={() => setEventForm(emptyEventForm())}
               style={{
@@ -506,6 +551,8 @@ export function ProjectPage() {
               <Plus style={{ width: 13, height: 13 }} />
               New event
             </button>
+            )}
+            {!readOnly && (
             <button
               onClick={() => { setForm(emptyTodo()); setIsNew(true) }}
               style={{
@@ -519,6 +566,7 @@ export function ProjectPage() {
               <Plus style={{ width: 13, height: 13 }} />
               New task
             </button>
+            )}
           </>
         }
       />
@@ -783,6 +831,18 @@ export function ProjectPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Share modal — owner only */}
+      {isOwner && col && (
+        <ShareDialog
+          collectionRef={col.ref}
+          collectionDisplayName={displayName}
+          accentColor={color.bg}
+          me={me}
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+        />
+      )}
     </div>
   )
 }

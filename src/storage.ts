@@ -1,7 +1,7 @@
 // Storage layer — defines the Storage interface and provides MemoryStorage
 // for tests and local development. KVStorage (Deno KV) lives in storage_kv.ts.
 
-import type { User } from "./types.ts";
+import type { SharingGrant, User } from "./types.ts";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,6 +53,14 @@ export interface Storage {
   createUser(user: User): Promise<void>;
   updateUser(username: string, updates: Partial<Pick<User, "passwordHash" | "displayName" | "email" | "timezone" | "isAdmin">>): Promise<void>;
   deleteUser(username: string): Promise<void>;
+
+  // ── Sharing grants ─────────────────────────────────────────────────────────
+  getGrant(owner: string, calendar: string, sharee: string): Promise<SharingGrant | null>;
+  listGrantsByCalendar(owner: string, calendar: string): Promise<SharingGrant[]>;
+  listGrantsForSharee(sharee: string): Promise<SharingGrant[]>;
+  /** Create or update a grant. */
+  setGrant(grant: SharingGrant): Promise<void>;
+  removeGrant(owner: string, calendar: string, sharee: string): Promise<void>;
 
   // ── Calendars (all user-scoped) ────────────────────────────────────────────
   listCalendars(username: string): Promise<Calendar[]>;
@@ -117,6 +125,8 @@ export class MemoryStorage implements Storage {
   private userCalendars = new Map<string, Map<string, StoredCalendar>>();
   // Per-user inbox items: username → uid → InboxItem
   private userInbox = new Map<string, Map<string, InboxItem>>();
+  // Sharing grants: "owner\x00calendar\x00sharee" → SharingGrant
+  private grants = new Map<string, SharingGrant>();
 
   // ── User management ────────────────────────────────────────────────────────
 
@@ -162,6 +172,35 @@ export class MemoryStorage implements Storage {
     this.users.delete(username);
     this.userCalendars.delete(username);
     this.userInbox.delete(username);
+    for (const [key, g] of this.grants) {
+      if (g.owner === username || g.sharee === username) this.grants.delete(key);
+    }
+  }
+
+  // ── Sharing grants ─────────────────────────────────────────────────────────
+
+  private static grantKey(owner: string, calendar: string, sharee: string): string {
+    return `${owner}\x00${calendar}\x00${sharee}`;
+  }
+
+  async getGrant(owner: string, calendar: string, sharee: string): Promise<SharingGrant | null> {
+    return this.grants.get(MemoryStorage.grantKey(owner, calendar, sharee)) ?? null;
+  }
+
+  async listGrantsByCalendar(owner: string, calendar: string): Promise<SharingGrant[]> {
+    return Array.from(this.grants.values()).filter((g) => g.owner === owner && g.calendar === calendar);
+  }
+
+  async listGrantsForSharee(sharee: string): Promise<SharingGrant[]> {
+    return Array.from(this.grants.values()).filter((g) => g.sharee === sharee);
+  }
+
+  async setGrant(grant: SharingGrant): Promise<void> {
+    this.grants.set(MemoryStorage.grantKey(grant.owner, grant.calendar, grant.sharee), { ...grant });
+  }
+
+  async removeGrant(owner: string, calendar: string, sharee: string): Promise<void> {
+    this.grants.delete(MemoryStorage.grantKey(owner, calendar, sharee));
   }
 
   // ── Calendars ──────────────────────────────────────────────────────────────
@@ -200,6 +239,9 @@ export class MemoryStorage implements Storage {
     const cals = this._cals(username);
     if (!cals.has(name)) throw new Error(`Calendar ${name} not found`);
     cals.delete(name);
+    for (const [key, g] of this.grants) {
+      if (g.owner === username && g.calendar === name) this.grants.delete(key);
+    }
   }
 
   async updateCalendarDisplayName(username: string, name: string, displayName: string): Promise<void> {

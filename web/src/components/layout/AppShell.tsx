@@ -28,9 +28,17 @@ export function AppShell() {
     document.documentElement.classList.toggle('dark', theme === 'dark')
   }, [theme])
 
+  // Identity gate — a 401 here (no/invalid credentials) sends us to the login page
+  const { data: me, isLoading: meLoading, error: meError } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => caldav.whoami(),
+    retry: false,
+  })
+
   const { data: collections, isLoading } = useQuery({
     queryKey: ['collections'],
     queryFn: () => caldav.listCollections(),
+    enabled: !!me,
   })
 
   // Ensure the inbox collection exists; create it silently if not.
@@ -38,7 +46,8 @@ export function AppShell() {
   // is reserved by the server for CalDAV scheduling (RFC 6638).
   useEffect(() => {
     if (!collections) return
-    const hasInbox = collections.some((c) => c.name === 'capture')
+    // Only the user's own 'capture' counts — a shared one has ref 'owner~capture'
+    const hasInbox = collections.some((c) => c.ref === 'capture')
     if (!hasInbox) {
       caldav
         .createCollection('capture', { displayName: 'Inbox' })
@@ -47,7 +56,11 @@ export function AppShell() {
     }
   }, [collections, qc])
 
-  if (isLoading) {
+  if (meError) {
+    return <Navigate to="/login" replace />
+  }
+
+  if (meLoading || isLoading) {
     return (
       <div
         style={{
@@ -83,7 +96,7 @@ export function AppShell() {
   return (
     <DndContext sensors={sensors} collisionDetection={collisionDetection}>
       <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--background)' }}>
-        <CollectionSidebar collections={collections ?? []} />
+        <CollectionSidebar collections={collections ?? []} me={me ?? null} />
         <main style={{ flex: 1, minWidth: 0, overflow: 'auto' }}>
           <Outlet />
         </main>

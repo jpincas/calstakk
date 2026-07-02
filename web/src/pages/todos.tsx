@@ -27,10 +27,13 @@ export function TodosPage() {
     queryFn: () => caldav.listCollections(),
   })
 
-  const names = collections.map((c: Collection) => c.name)
+  const names = collections.map((c: Collection) => c.ref)
   const color = collection
     ? collectionColor(names, collection)
     : { bg: '#6366F1', text: '#fff', light: '#eef2ff', border: '#a5b4fc', muted: '#c7d2fe' }
+
+  // 'capture' (the /inbox route) is always own/writable; guard the param path anyway.
+  const readOnly = collections.find((c: Collection) => c.ref === collection)?.myAccess === 'read'
 
   const [newForm, setNewForm] = useState<TodoForm | null>(null)
 
@@ -65,18 +68,20 @@ export function TodosPage() {
         icon={<Inbox size={14} color="#3B82F6" strokeWidth={2.2} />}
         title="Inbox"
         controls={
-          <button
-            onClick={() => setNewForm(emptyForm(crypto.randomUUID()))}
-            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 7, border: 'none', background: '#3B82F6', color: '#fff', fontSize: 16, fontWeight: 600, cursor: 'pointer' }}
-          >
-            <Plus style={{ width: 13, height: 13 }} />
-            New task
-          </button>
+          readOnly ? undefined : (
+            <button
+              onClick={() => setNewForm(emptyForm(crypto.randomUUID()))}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 7, border: 'none', background: '#3B82F6', color: '#fff', fontSize: 16, fontWeight: 600, cursor: 'pointer' }}
+            >
+              <Plus style={{ width: 13, height: 13 }} />
+              New task
+            </button>
+          )
         }
       />
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px', display: 'flex', flexDirection: 'column' }}>
-        <TaskList collection={collection} accentColor={color.bg} />
+        <TaskList collection={collection} accentColor={color.bg} readOnly={readOnly} />
       </div>
 
       {/* New task modal — full-featured creation */}

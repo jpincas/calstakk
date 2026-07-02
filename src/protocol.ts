@@ -12,6 +12,8 @@ import {
   ParsedPath,
   parsePath,
   principalPath,
+  SharingAccess,
+  SharingGrant,
   User,
 } from "./types.ts";
 
@@ -27,16 +29,20 @@ import {
   esc,
   multiStatusXML,
   notFoundResponseXML,
+  parseAcl,
   parsePropfind,
   parseProppatch,
   parseReport,
+  type PrincipalPropertySearch,
   type PropFindRequest,
+  type PropName,
   type PropstatEntry,
   responseXML,
   type SyncCollectionQuery,
 } from "./xml.ts";
 
-import type { Storage } from "./storage.ts";
+import type { CalendarObject, Storage } from "./storage.ts";
+import { handleApi, isApiPath } from "./api.ts";
 import { extractUID, extractTzOffsetFromVTZ, matchesFilter, validateCalendarObject, parseICS, getProp, getProps, getComps, type ICalComponent } from "./ical.ts";
 import type { Config } from "./config.ts";
 import { isWellFormedXML } from "./xmlparse.ts";
@@ -79,16 +85,26 @@ function xmlResponse(status: number, body: string, extraHeaders: Record<string, 
   });
 }
 
-function unauthorized(): Response {
+function unauthorized(req?: Request): Response {
+  // Suppress the Basic challenge for browser fetch() calls — browsers pop a
+  // native credentials dialog on WWW-Authenticate: Basic, hijacking the SPA's
+  // own login flow. Browsers auto-send Sec-Fetch-Mode on every request
+  // ("cors"/"same-origin" for fetch, "navigate" for address-bar visits), so
+  // this also covers stale bundles that predate X-Requested-With. CalDAV
+  // clients send neither header and get the regular RFC 7235 challenge.
+  const secFetchMode = req?.headers.get("Sec-Fetch-Mode");
+  const fromBrowserFetch =
+    req?.headers.get("X-Requested-With") === "XMLHttpRequest" ||
+    (!!secFetchMode && secFetchMode !== "navigate");
   return new Response("Unauthorized", {
     status: 401,
-    headers: { "WWW-Authenticate": 'Basic realm="CalStakk"' },
+    headers: fromBrowserFetch ? {} : { "WWW-Authenticate": 'Basic realm="CalStakk"' },
   });
 }
 
-const DAV_HEADER = "1, calendar-access, calendar-availability, calendar-no-timezone, calendar-managed-attachments, calendar-managed-attachments-no-recurrence, calendar-auto-schedule";
+const DAV_HEADER = "1, access-control, calendar-access, calendar-availability, calendar-no-timezone, calendar-managed-attachments, calendar-managed-attachments-no-recurrence, calendar-auto-schedule";
 const ALLOW_HEADER =
-  "OPTIONS, GET, HEAD, PUT, POST, DELETE, PROPFIND, PROPPATCH, MKCOL, MKCALENDAR, REPORT";
+  "OPTIONS, GET, HEAD, PUT, POST, DELETE, PROPFIND, PROPPATCH, MKCOL, MKCALENDAR, REPORT, ACL";
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
@@ -104,6 +120,13 @@ async function authenticate(req: Request, storage: Storage, config: Config): Pro
       timezone: config.user.timezone,
       isAdmin: true,
     });
+  } else if (config.user.password && !ownerInStore.passwordHash) {
+    // Owner was bootstrapped while auth was disabled (empty hash). Adopt the
+    // newly configured password — otherwise enabling CALSTAKK_PASSWORD on an
+    // existing store locks the owner out forever.
+    await storage.updateUser(config.user.username, {
+      passwordHash: await hashPassword(config.user.password),
+    });
   }
 
   // No password configured — auth disabled, treat every request as the owner.
@@ -112,13 +135,13 @@ async function authenticate(req: Request, storage: Storage, config: Config): Pro
   }
 
   const creds = parseBasicAuth(req.headers.get("Authorization"));
-  if (!creds) return unauthorized();
+  if (!creds) return unauthorized(req);
 
   const user = await storage.getUser(creds.username);
-  if (!user) return unauthorized();
+  if (!user) return unauthorized(req);
 
   const valid = await verifyPassword(creds.password, user.passwordHash);
-  if (!valid) return unauthorized();
+  if (!valid) return unauthorized(req);
 
   return user;
 }
@@ -163,6 +186,9 @@ async function route(req: Request, storage: Storage, config: Config): Promise<Re
   if (authResult instanceof Response) return authResult;
   const user = authResult;
 
+  // Admin / account JSON API (no DAV semantics)
+  if (isApiPath(path)) return await handleApi(req, path, user, storage);
+
   switch (method) {
     case "GET":   return await handleGet(req, path, parsed, user, storage);
     case "HEAD":  return await handleHead(path, parsed, user, storage);
@@ -176,6 +202,7 @@ async function route(req: Request, storage: Storage, config: Config): Promise<Re
     case "COPY":  return await handleCopy(req, path, parsed, user, storage);
     case "MOVE":  return await handleMove(req, path, parsed, user, storage);
     case "POST":  return await handlePost(req, path, parsed, user, storage);
+    case "ACL":   return await handleAcl(req, path, parsed, user, storage);
     default: return respond(405, "Method not allowed", { Allow: ALLOW_HEADER });
   }
 }
@@ -197,6 +224,171 @@ function checkOwnership(parsed: ParsedPath, user: User): Response | null {
   if (!parsed.username) return null; // root-level path, no ownership check
   if (parsed.username === user.username || user.isAdmin) return null;
   return respond(403, "Forbidden: you do not own this resource");
+}
+
+// ─── Access control (RFC 3744 subset) ─────────────────────────────────────────
+
+type NeedAccess = "read" | "write";
+
+/**
+ * Access check consulting sharing grants. Owner and admin hold all privileges;
+ * a grant confers DAV:read or DAV:read + DAV:write on one collection and its
+ * objects. Principals are readable by any authenticated user (discovery).
+ * Scheduling inbox/outbox and collection create/delete stay owner-only.
+ */
+async function checkAccess(
+  parsed: ParsedPath,
+  user: User,
+  storage: Storage,
+  need: NeedAccess,
+): Promise<Response | null> {
+  if (!parsed.username) return null;
+  if (parsed.username === user.username || user.isAdmin) return null;
+  if (parsed.type === "principal" && need === "read") return null;
+  if (parsed.type === "collection" || parsed.type === "object") {
+    const grant = await storage.getGrant(parsed.username, parsed.collection, user.username);
+    if (grant && (need === "read" || grant.access === "read-write")) return null;
+  }
+  if (parsed.type === "calendarHome" && need === "read") {
+    const grants = await storage.listGrantsForSharee(user.username);
+    if (grants.some((g) => g.owner === parsed.username)) return null;
+  }
+  return respond(403, "Forbidden: insufficient privileges on this resource");
+}
+
+/** Per-collection sharing state used to render owner/acl/current-user-privilege-set. */
+interface SharingContext {
+  owner: string;
+  grants: SharingGrant[];
+  /** Requester's effective access: "all" (owner/admin), or the granted level. */
+  requesterAccess: "all" | SharingAccess;
+}
+
+async function sharingContext(
+  storage: Storage,
+  owner: string,
+  calName: string,
+  user: User,
+): Promise<SharingContext> {
+  const grants = await storage.listGrantsByCalendar(owner, calName);
+  let requesterAccess: SharingContext["requesterAccess"] = "read";
+  if (user.username === owner || user.isAdmin) {
+    requesterAccess = "all";
+  } else {
+    const g = grants.find((g) => g.sharee === user.username);
+    if (g) requesterAccess = g.access;
+  }
+  return { owner, grants, requesterAccess };
+}
+
+/** Distinct owners who have shared at least one collection with the user. */
+async function shareeHomeOwners(storage: Storage, username: string): Promise<string[]> {
+  const grants = await storage.listGrantsForSharee(username);
+  return Array.from(new Set(grants.map((g) => g.owner)));
+}
+
+function currentUserPrivilegeSetXml(access: "all" | SharingAccess): string {
+  const readPrivs = D("privilege", D("read")) + D("privilege", C("read-free-busy"));
+  if (access === "all") {
+    return D("current-user-privilege-set", D("privilege", D("all")) + readPrivs + D("privilege", D("write")));
+  }
+  if (access === "read-write") {
+    return D("current-user-privilege-set", readPrivs + D("privilege", D("write")));
+  }
+  return D("current-user-privilege-set", readPrivs);
+}
+
+function aclPropXml(owner: string, grants: SharingGrant[]): string {
+  const aces: string[] = [
+    D(
+      "ace",
+      D("principal", D("href", principalPath(owner))) +
+        D("grant", D("privilege", D("all"))) +
+        D("protected"),
+    ),
+  ];
+  for (const g of grants) {
+    aces.push(D(
+      "ace",
+      D("principal", D("href", principalPath(g.sharee))) +
+        D("grant", D("privilege", D("read")) + (g.access === "read-write" ? D("privilege", D("write")) : "")),
+    ));
+  }
+  return D("acl", aces.join(""));
+}
+
+function davError(condition: string): string {
+  return '<?xml version="1.0" encoding="UTF-8"?>' +
+    `<D:error xmlns:D="DAV:"><D:${condition}/></D:error>`;
+}
+
+// ─── ACL method (RFC 3744 §8.1) ───────────────────────────────────────────────
+
+async function handleAcl(
+  req: Request,
+  _path: string,
+  parsed: ParsedPath,
+  user: User,
+  storage: Storage,
+): Promise<Response> {
+  if (parsed.type !== "collection") {
+    return respond(403, "ACL is only supported on calendar collections");
+  }
+  const col = await storage.getCalendar(parsed.username, parsed.collection);
+  if (!col) return respond(404, "Not found");
+
+  // DAV:write-acl is held by the owner (and admin) only.
+  if (parsed.username !== user.username && !user.isAdmin) {
+    return xmlResponse(403, davError("need-privileges"));
+  }
+
+  const body = await req.text();
+  if (!body.trim() || !isWellFormedXML(body)) return respond(400, "Malformed XML request body");
+  const aces = parseAcl(body);
+  if (!aces) return respond(400, "Request body must be a DAV:acl element");
+
+  const newGrants = new Map<string, SharingAccess>();
+  for (const ace of aces) {
+    if (ace.invert) return xmlResponse(403, davError("no-invert"));
+    if (ace.deny) return xmlResponse(403, davError("grant-only"));
+    if (ace.isProtected || ace.inherited) {
+      return xmlResponse(403, davError("no-protected-ace-conflict"));
+    }
+    if (ace.principalType !== "href" || !ace.principalHref) {
+      return xmlResponse(403, davError("allowed-principal"));
+    }
+    let principalHref = ace.principalHref;
+    try {
+      principalHref = new URL(principalHref).pathname;
+    } catch { /* relative href — use as-is */ }
+    const p = parsePath(decodeURIComponent(principalHref));
+    if (p.type !== "principal") return xmlResponse(403, davError("recognized-principal"));
+    const grantee = await storage.getUser(p.username);
+    if (!grantee) return xmlResponse(403, davError("recognized-principal"));
+    // The owner's DAV:all ACE is protected and implicit — ignore it if echoed back.
+    if (p.username === parsed.username) continue;
+
+    const hasWrite = ace.privileges.some((pr) =>
+      pr.ns === "DAV:" && (pr.local === "write" || pr.local === "all")
+    );
+    const hasRead = hasWrite ||
+      ace.privileges.some((pr) => pr.ns === "DAV:" && pr.local === "read");
+    if (!hasRead) return xmlResponse(403, davError("not-supported-privilege"));
+
+    newGrants.set(p.username, hasWrite ? "read-write" : "read");
+  }
+
+  // The DAV:acl property is set in full: replace the existing grant set.
+  const existing = await storage.listGrantsByCalendar(parsed.username, parsed.collection);
+  for (const g of existing) {
+    if (!newGrants.has(g.sharee)) {
+      await storage.removeGrant(parsed.username, parsed.collection, g.sharee);
+    }
+  }
+  for (const [sharee, access] of newGrants) {
+    await storage.setGrant({ owner: parsed.username, calendar: parsed.collection, sharee, access });
+  }
+  return respond(200);
 }
 
 // ─── GET / HEAD ───────────────────────────────────────────────────────────────
@@ -236,8 +428,8 @@ function stripKnownVTimezones(ics: string): string {
 }
 
 async function handleGet(req: Request, _path: string, parsed: ParsedPath, user: User, storage: Storage): Promise<Response> {
-  const own = checkOwnership(parsed, user);
-  if (own) return own;
+  const denied = await checkAccess(parsed, user, storage, "read");
+  if (denied) return denied;
 
   if (parsed.type !== "object") return respond(405, "Method not allowed");
 
@@ -261,8 +453,8 @@ async function handleGet(req: Request, _path: string, parsed: ParsedPath, user: 
 }
 
 async function handleHead(_path: string, parsed: ParsedPath, user: User, storage: Storage): Promise<Response> {
-  const own = checkOwnership(parsed, user);
-  if (own) return own;
+  const denied = await checkAccess(parsed, user, storage, "read");
+  if (denied) return denied;
 
   if (parsed.type !== "object") return respond(405, "Method not allowed");
 
@@ -289,8 +481,8 @@ async function handlePut(
   user: User,
   storage: Storage,
 ): Promise<Response> {
-  const own = checkOwnership(parsed, user);
-  if (own) return own;
+  const denied = await checkAccess(parsed, user, storage, "write");
+  if (denied) return denied;
 
   if (parsed.type !== "object") return respond(405, "Method not allowed");
 
@@ -542,8 +734,12 @@ async function handleDelete(
   user: User,
   storage: Storage,
 ): Promise<Response> {
-  const own = checkOwnership(parsed, user);
-  if (own) return own;
+  // Objects: DAV:write via ownership or a read-write grant. Collections:
+  // deleting requires DAV:unbind on the calendar home — owner/admin only.
+  const denied = parsed.type === "object"
+    ? await checkAccess(parsed, user, storage, "write")
+    : checkOwnership(parsed, user);
+  if (denied) return denied;
 
   if (parsed.type === "object") {
     const { username, collection: colName, uid } = parsed;
@@ -591,8 +787,8 @@ async function handlePropfind(
   storage: Storage,
   config: Config,
 ): Promise<Response> {
-  const own = checkOwnership(parsed, user);
-  if (own) return own;
+  const denied = await checkAccess(parsed, user, storage, "read");
+  if (denied) return denied;
 
   const depth = parseDepth(req.headers.get("Depth"));
   const body = await req.text();
@@ -607,7 +803,7 @@ async function handlePropfind(
     case "principals": {
       // Root or /principals/ — return current user's principal
       const pp = principalPath(user.username);
-      responses.push(buildPrincipalResponse(pp, user, pfReq));
+      responses.push(buildPrincipalResponse(pp, user, pfReq, user, await shareeHomeOwners(storage, user.username)));
       if (depth !== "0") {
         const chp = calendarHomePath(user.username);
         responses.push(buildCalendarHomeResponse(chp, pfReq));
@@ -619,14 +815,18 @@ async function handlePropfind(
       // /principals/<username> — return that user's principal props
       const targetUser = await storage.getUser(parsed.username);
       if (!targetUser) return respond(404, "Not found");
-      responses.push(buildPrincipalResponse(path, targetUser, pfReq));
-      if (depth !== "0") {
+      responses.push(buildPrincipalResponse(path, targetUser, pfReq, user, await shareeHomeOwners(storage, targetUser.username)));
+      // Depth expansion below the principal exposes the target's calendars —
+      // only for the principal themselves or an admin.
+      const canExpand = parsed.username === user.username || user.isAdmin;
+      if (depth !== "0" && canExpand) {
         const chp = calendarHomePath(parsed.username);
         responses.push(buildCalendarHomeResponse(chp, pfReq));
         if (depth === "infinity") {
           const cals = await storage.listCalendars(parsed.username);
           for (const cal of cals) {
-            responses.push(buildCollectionResponse(cal.href, cal, pfReq, "0", config));
+            const sharing = await sharingContext(storage, parsed.username, cal.name, user);
+            responses.push(buildCollectionResponse(cal.href, cal, pfReq, "0", config, user, sharing));
           }
         }
       }
@@ -636,13 +836,22 @@ async function handlePropfind(
     case "calendarHome": {
       responses.push(buildCalendarHomeResponse(path, pfReq));
       if (depth !== "0") {
-        const cals = await storage.listCalendars(parsed.username);
+        let cals = await storage.listCalendars(parsed.username);
+        // Browsing another user's home lists only granted collections — for
+        // admins too: blanket admin access covers direct URLs, but discovery
+        // reflects what was actually shared.
+        if (parsed.username !== user.username) {
+          const grants = await storage.listGrantsForSharee(user.username);
+          const granted = new Set(grants.filter((g) => g.owner === parsed.username).map((g) => g.calendar));
+          cals = cals.filter((c) => granted.has(c.name));
+        }
         for (const cal of cals) {
-          responses.push(buildCollectionResponse(cal.href, cal, pfReq, "0", config));
+          const sharing = await sharingContext(storage, parsed.username, cal.name, user);
+          responses.push(buildCollectionResponse(cal.href, cal, pfReq, "0", config, user, sharing));
           if (depth === "infinity") {
             const objs = await storage.listObjects(parsed.username, cal.name);
             for (const obj of objs) {
-              responses.push(buildObjectResponse(obj.href, obj, pfReq));
+              responses.push(buildObjectResponse(obj.href, obj, pfReq, false, undefined, user));
             }
           }
         }
@@ -655,11 +864,12 @@ async function handlePropfind(
       const col = await storage.getCalendar(username, colName);
       if (!col) return respond(404, "Not found");
       const syncToken = await storage.getSyncToken(username, colName);
-      responses.push(buildCollectionResponse(path, col, pfReq, syncToken, config));
+      const sharing = await sharingContext(storage, username, colName, user);
+      responses.push(buildCollectionResponse(path, col, pfReq, syncToken, config, user, sharing));
       if (depth !== "0") {
         const objs = await storage.listObjects(username, colName);
         for (const obj of objs) {
-          responses.push(buildObjectResponse(obj.href, obj, pfReq));
+          responses.push(buildObjectResponse(obj.href, obj, pfReq, false, undefined, user));
         }
       }
       break;
@@ -669,7 +879,7 @@ async function handlePropfind(
       const { username, collection: colName, uid } = parsed;
       const obj = await storage.getObject(username, colName, uid);
       if (!obj) return respond(404, "Not found");
-      responses.push(buildObjectResponse(path, obj, pfReq));
+      responses.push(buildObjectResponse(path, obj, pfReq, false, undefined, user));
       break;
     }
 
@@ -730,6 +940,11 @@ const PROTECTED_PROPS = new Set([
   makeKey("DAV:", "supportedlock"),
   makeKey("DAV:", "sync-token"),
   makeKey("DAV:", "supported-report-set"),
+  makeKey("DAV:", "owner"),
+  makeKey("DAV:", "acl"),
+  makeKey("DAV:", "current-user-privilege-set"),
+  makeKey("DAV:", "principal-URL"),
+  makeKey("DAV:", "principal-collection-set"),
   makeKey("urn:ietf:params:xml:ns:caldav", "supported-calendar-component-set"),
   makeKey("urn:ietf:params:xml:ns:caldav", "supported-calendar-data"),
   makeKey("urn:ietf:params:xml:ns:caldav", "max-resource-size"),
@@ -745,6 +960,11 @@ const PROTECTED_PROPS = new Set([
 
 const ALLPROP_EXCLUDED = new Set([
   makeKey("DAV:", "sync-token"),
+  // RFC 3744 properties are not RFC 4918 allprop properties.
+  makeKey("DAV:", "owner"),
+  makeKey("DAV:", "acl"),
+  makeKey("DAV:", "current-user-privilege-set"),
+  makeKey("DAV:", "principal-collection-set"),
   makeKey("urn:ietf:params:xml:ns:caldav", "calendar-data"),
   makeKey("urn:ietf:params:xml:ns:caldav", "calendar-description"),
   makeKey("urn:ietf:params:xml:ns:caldav", "supported-calendar-data"),
@@ -766,18 +986,30 @@ const ALLPROP_EXCLUDED = new Set([
   makeKey("urn:ietf:params:xml:ns:caldav", "schedule-default-calendar-URL"),
 ]);
 
-function principalProps(user: User): PropMap {
+function principalProps(user: User, requester?: User, extraHomeOwners: string[] = []): PropMap {
   const m = new Map<string, string>();
   const pp = principalPath(user.username);
   const chp = calendarHomePath(user.username);
   const ip = inboxPath(user.username);
   const op = outboxPath(user.username);
   const defaultCal = collectionPath(user.username, DEFAULT_CALENDAR_NAME);
+  const cup = principalPath((requester ?? user).username);
+  const homeHrefs = D("href", chp) +
+    extraHomeOwners.filter((o) => o !== user.username).map((o) => D("href", calendarHomePath(o))).join("");
   m.set(makeKey("DAV:", "resourcetype"), D("resourcetype", D("collection") + D("principal")));
   m.set(makeKey("DAV:", "displayname"), D("displayname", esc(user.displayName)));
-  m.set(makeKey("DAV:", "current-user-principal"), D("current-user-principal", D("href", pp)));
-  m.set(makeKey("urn:ietf:params:xml:ns:caldav", "calendar-home-set"), C("calendar-home-set", D("href", chp)));
+  m.set(makeKey("DAV:", "current-user-principal"), D("current-user-principal", D("href", cup)));
+  m.set(makeKey("DAV:", "principal-URL"), D("principal-URL", D("href", pp)));
+  m.set(makeKey("DAV:", "principal-collection-set"), D("principal-collection-set", D("href", "/principals/")));
+  m.set(makeKey("urn:ietf:params:xml:ns:caldav", "calendar-home-set"), C("calendar-home-set", homeHrefs));
   m.set(makeKey("DAV:", "creationdate"), D("creationdate", new Date().toISOString()));
+  m.set(makeKey("DAV:", "supported-report-set"), D(
+    "supported-report-set",
+    D("supported-report", D("report", D("principal-property-search"))) +
+    D("supported-report", D("report", D("principal-search-property-set"))) +
+    D("supported-report", D("report", D("principal-match"))) +
+    D("supported-report", D("report", D("expand-property"))),
+  ));
   if (user.email) {
     const addr = user.email.startsWith("mailto:") ? user.email : `mailto:${user.email}`;
     m.set(makeKey("urn:ietf:params:xml:ns:caldav", "calendar-user-address-set"),
@@ -1015,12 +1247,22 @@ function collectionProps(
   syncToken: string,
   customProps: Record<string, string> = {},
   config?: Config,
+  requester?: User,
+  sharing?: SharingContext,
 ): PropMap {
   const m = new Map<string, string>();
-  const pp = principalPath(username);
+  const pp = principalPath(requester?.username ?? username);
   m.set(makeKey("DAV:", "resourcetype"), D("resourcetype", D("collection") + C("calendar")));
   m.set(makeKey("DAV:", "displayname"), D("displayname", esc(displayName || name)));
   m.set(makeKey("DAV:", "current-user-principal"), D("current-user-principal", D("href", pp)));
+  if (sharing) {
+    m.set(makeKey("DAV:", "owner"), D("owner", D("href", principalPath(sharing.owner))));
+    m.set(makeKey("DAV:", "current-user-privilege-set"), currentUserPrivilegeSetXml(sharing.requesterAccess));
+    // Reading DAV:acl requires DAV:read-acl, held by owner/admin only.
+    if (sharing.requesterAccess === "all") {
+      m.set(makeKey("DAV:", "acl"), aclPropXml(sharing.owner, sharing.grants));
+    }
+  }
   m.set(makeKey("DAV:", "sync-token"), D("sync-token", wrapSyncToken(syncToken)));
   m.set(makeKey("DAV:", "creationdate"), D("creationdate", new Date().toISOString()));
   m.set(makeKey("DAV:", "supported-report-set"), D(
@@ -1408,7 +1650,7 @@ function objectPropsMap(
   lastModified: Date,
   contentLength: number,
   ics: string,
-  username: string,
+  username: string, // used for current-user-principal — pass the requester's username
   deadProps: Record<string, string> = {},
 ): PropMap {
   const m = new Map<string, string>();
@@ -1510,8 +1752,19 @@ function buildEmptyProp(ns: string, local: string): string {
   return `<X:${local} xmlns:X="${ns}"/>`;
 }
 
-function buildPrincipalResponse(href: string, user: User, pfReq: PropFindRequest): string {
-  return buildPropsResponse(href, principalProps(user), pfReq);
+function buildPrincipalResponse(
+  href: string,
+  user: User,
+  pfReq: PropFindRequest,
+  requester?: User,
+  extraHomeOwners: string[] = [],
+): string {
+  return buildPropsResponse(href, principalProps(user, requester, extraHomeOwners), pfReq);
+}
+
+/** Principal props with the shared calendar homes resolved from storage. */
+async function principalPropsFor(target: User, requester: User, storage: Storage): Promise<PropMap> {
+  return principalProps(target, requester, await shareeHomeOwners(storage, target.username));
 }
 
 function buildCalendarHomeResponse(href: string, pfReq: PropFindRequest): string {
@@ -1524,13 +1777,15 @@ function buildCollectionResponse(
   pfReq: PropFindRequest,
   syncToken = "0",
   config?: Config,
+  requester?: User,
+  sharing?: SharingContext,
 ): string {
   // Extract username from href: /calendars/<username>/<name>
   const parts = href.split("/").filter(Boolean);
   const username = parts[1] ?? "";
   return buildPropsResponse(
     href,
-    collectionProps(username, col.name, col.displayName, syncToken, col.customProps ?? {}, config),
+    collectionProps(username, col.name, col.displayName, syncToken, col.customProps ?? {}, config, requester, sharing),
     pfReq,
   );
 }
@@ -1541,13 +1796,15 @@ function buildObjectResponse(
   pfReq: PropFindRequest,
   noTimezones = false,
   calDataSpec?: CalDataCompSpec,
+  requester?: User,
 ): string {
   let ics = noTimezones ? stripKnownVTimezones(obj.ics) : obj.ics;
   if (calDataSpec) ics = applyCalDataSpec(ics, calDataSpec);
   const contentLength = (noTimezones || calDataSpec) ? new TextEncoder().encode(ics).length : obj.contentLength;
-  // Extract username from stored href or from the request href
+  // current-user-principal is the authenticated user's principal (RFC 5397);
+  // fall back to the href's username when no requester is threaded through.
   const parts = (obj.href ?? href).split("/").filter(Boolean) ?? [];
-  const username = parts[1] ?? "";
+  const username = requester?.username ?? parts[1] ?? "";
   return buildPropsResponse(
     href,
     objectPropsMap(obj.etag, obj.lastModified, contentLength, ics, username, obj.deadProps ?? {}),
@@ -1583,8 +1840,9 @@ async function handleProppatch(
   user: User,
   storage: Storage,
 ): Promise<Response> {
-  const own = checkOwnership(parsed, user);
-  if (own) return own;
+  // DAV:write-properties is part of DAV:write — a read-write grant suffices.
+  const denied = await checkAccess(parsed, user, storage, "write");
+  if (denied) return denied;
 
   const { username, collection: colName, uid } = parsed;
 
@@ -1727,6 +1985,7 @@ async function handleMkcol(
   storage: Storage,
   isMkcalendar: boolean,
 ): Promise<Response> {
+  // Creating a collection requires DAV:bind on the calendar home — owner/admin only.
   const own = checkOwnership(parsed, user);
   if (own) return own;
 
@@ -1766,6 +2025,21 @@ async function handleMkcol(
 
 // ─── COPY ─────────────────────────────────────────────────────────────────────
 
+/** Copy an object across users (grants make cross-user destinations reachable). */
+async function copyObjectAcrossUsers(
+  storage: Storage,
+  src: CalendarObject,
+  dstUsername: string,
+  dstCal: string,
+  dstUid: string,
+): Promise<void> {
+  await storage.putObject(dstUsername, dstCal, dstUid, src.ics, src.icalUID);
+  for (const [k, v] of Object.entries(src.deadProps ?? {})) {
+    if (k.startsWith("urn:calstakk:internal")) continue;
+    await storage.updateObjectProp(dstUsername, dstCal, dstUid, k, v);
+  }
+}
+
 async function handleCopy(
   req: Request,
   path: string,
@@ -1773,8 +2047,8 @@ async function handleCopy(
   user: User,
   storage: Storage,
 ): Promise<Response> {
-  const own = checkOwnership(parsed, user);
-  if (own) return own;
+  const denied = await checkAccess(parsed, user, storage, "read");
+  if (denied) return denied;
 
   const destHeader = req.headers.get("Destination");
   if (!destHeader) return respond(400, "Destination header required");
@@ -1795,16 +2069,22 @@ async function handleCopy(
 
   const dstParsed = parsePath(destPath);
   if (dstParsed.type !== "object") return respond(409, "Invalid destination path");
+  const dstDenied = await checkAccess(dstParsed, user, storage, "write");
+  if (dstDenied) return dstDenied;
 
-  const dstCal = await storage.getCalendar(username, dstParsed.collection);
+  const dstCal = await storage.getCalendar(dstParsed.username, dstParsed.collection);
   if (!dstCal) return respond(409, "Destination collection does not exist");
 
-  const existingDst = await storage.getObject(username, dstParsed.collection, dstParsed.uid);
+  const existingDst = await storage.getObject(dstParsed.username, dstParsed.collection, dstParsed.uid);
   if (existingDst && (req.headers.get("Overwrite") ?? "T") === "F") {
     return respond(412, "Precondition Failed: destination exists");
   }
 
-  await storage.copyObject(username, srcCol, srcUid, dstParsed.collection, dstParsed.uid);
+  if (dstParsed.username === username) {
+    await storage.copyObject(username, srcCol, srcUid, dstParsed.collection, dstParsed.uid);
+  } else {
+    await copyObjectAcrossUsers(storage, src, dstParsed.username, dstParsed.collection, dstParsed.uid);
+  }
   return respond(existingDst ? 204 : 201);
 }
 
@@ -1817,8 +2097,9 @@ async function handleMove(
   user: User,
   storage: Storage,
 ): Promise<Response> {
-  const own = checkOwnership(parsed, user);
-  if (own) return own;
+  // MOVE unbinds the source object — DAV:write is needed on both ends.
+  const denied = await checkAccess(parsed, user, storage, "write");
+  if (denied) return denied;
 
   const destHeader = req.headers.get("Destination");
   if (!destHeader) return respond(400, "Destination header required");
@@ -1839,16 +2120,23 @@ async function handleMove(
 
   const dstParsed = parsePath(destPath);
   if (dstParsed.type !== "object") return respond(409, "Invalid destination path");
+  const dstDenied = await checkAccess(dstParsed, user, storage, "write");
+  if (dstDenied) return dstDenied;
 
-  const dstCal = await storage.getCalendar(username, dstParsed.collection);
+  const dstCal = await storage.getCalendar(dstParsed.username, dstParsed.collection);
   if (!dstCal) return respond(409, "Destination collection does not exist");
 
-  const existingDst = await storage.getObject(username, dstParsed.collection, dstParsed.uid);
+  const existingDst = await storage.getObject(dstParsed.username, dstParsed.collection, dstParsed.uid);
   if (existingDst && (req.headers.get("Overwrite") ?? "T") === "F") {
     return respond(412, "Precondition Failed: destination exists");
   }
 
-  await storage.moveObject(username, srcCol, srcUid, dstParsed.collection, dstParsed.uid);
+  if (dstParsed.username === username) {
+    await storage.moveObject(username, srcCol, srcUid, dstParsed.collection, dstParsed.uid);
+  } else {
+    await copyObjectAcrossUsers(storage, src, dstParsed.username, dstParsed.collection, dstParsed.uid);
+    await storage.deleteObject(username, srcCol, srcUid);
+  }
   return respond(existingDst ? 204 : 201);
 }
 
@@ -1861,8 +2149,8 @@ async function handlePost(
   user: User,
   storage: Storage,
 ): Promise<Response> {
-  const own = checkOwnership(parsed, user);
-  if (own) return own;
+  const denied = await checkAccess(parsed, user, storage, "write");
+  if (denied) return denied;
 
   if (parsed.type === "outbox") return await handleOutboxPost(req, parsed, user);
 
@@ -1964,8 +2252,8 @@ async function handleReport(
   user: User,
   storage: Storage,
 ): Promise<Response> {
-  const own = checkOwnership(parsed, user);
-  if (own) return own;
+  const denied = await checkAccess(parsed, user, storage, "read");
+  if (denied) return denied;
 
   const body = await req.text();
   if (body.trim() && !isWellFormedXML(body)) return respond(400, "Malformed XML request body");
@@ -1978,13 +2266,26 @@ async function handleReport(
   }
 
   const noTimezones = (req.headers.get("CalDAV-Timezones") ?? "").toUpperCase() === "F";
-  const { username } = parsed;
+
+  // Principal reports (RFC 3744 §9) apply to the principal collection.
+  const principalTarget = parsed.type === "principals" || parsed.type === "principal" || parsed.type === "root";
+  if (report.type === "principal-property-search" || report.type === "principal-match" || report.type === "principal-search-property-set") {
+    if (!principalTarget) return respond(403, "Principal reports must target the principal collection");
+    switch (report.type) {
+      case "principal-property-search":
+        return await handlePrincipalPropertySearch(report.search, user, storage);
+      case "principal-match":
+        return await handlePrincipalMatch(report.requestedProps, report.allProp, user, storage);
+      case "principal-search-property-set":
+        return handlePrincipalSearchPropertySet();
+    }
+  }
 
   switch (report.type) {
     case "calendar-query":
       return await handleCalendarQuery(path, parsed, user, report.query, storage, noTimezones);
     case "calendar-multiget":
-      return await handleCalendarMultiget(report.multiget, username, storage, noTimezones);
+      return await handleCalendarMultiget(report.multiget, user, storage, noTimezones);
     case "sync-collection":
       return await handleSyncCollection(req, path, parsed, user, report.sync, storage);
     case "free-busy-query":
@@ -1994,6 +2295,66 @@ async function handleReport(
     default:
       return respond(400, "Unknown REPORT type");
   }
+}
+
+// ─── Principal reports (RFC 3744 §9) ──────────────────────────────────────────
+
+async function handlePrincipalPropertySearch(
+  search: PrincipalPropertySearch,
+  user: User,
+  storage: Storage,
+): Promise<Response> {
+  if (search.searches.length === 0) {
+    return respond(400, "principal-property-search requires at least one property-search");
+  }
+
+  const users = await storage.listUsers();
+  const matched = users.filter((u) =>
+    search.searches.every((s) => {
+      const values: string[] = [];
+      for (const pn of s.props) {
+        if (pn.ns === "DAV:" && pn.local === "displayname") values.push(u.displayName, u.username);
+        else if (pn.ns === "urn:ietf:params:xml:ns:caldav" && pn.local === "calendar-user-address-set") {
+          if (u.email) values.push(u.email);
+        } else if (pn.ns === "DAV:" && pn.local === "principal-URL") values.push(principalPath(u.username));
+      }
+      const needle = s.match.toLowerCase();
+      return values.some((v) => v.toLowerCase().includes(needle));
+    })
+  );
+
+  const pfReq: PropFindRequest = search.allProp
+    ? { type: "allprop" }
+    : { type: "prop", names: search.requestedProps };
+  const responses: string[] = [];
+  for (const u of matched) {
+    responses.push(buildPropsResponse(principalPath(u.username), await principalPropsFor(u, user, storage), pfReq));
+  }
+  return xmlResponse(207, multiStatusXML(responses));
+}
+
+async function handlePrincipalMatch(
+  requestedProps: PropName[],
+  allProp: boolean,
+  user: User,
+  storage: Storage,
+): Promise<Response> {
+  const pfReq: PropFindRequest = allProp ? { type: "allprop" } : { type: "prop", names: requestedProps };
+  const responses = [
+    buildPropsResponse(principalPath(user.username), await principalPropsFor(user, user, storage), pfReq),
+  ];
+  return xmlResponse(207, multiStatusXML(responses));
+}
+
+function handlePrincipalSearchPropertySet(): Response {
+  const body = '<?xml version="1.0" encoding="UTF-8"?>' +
+    '<D:principal-search-property-set xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">' +
+    '<D:principal-search-property><D:prop><D:displayname/></D:prop>' +
+    '<D:description xml:lang="en">Display name</D:description></D:principal-search-property>' +
+    '<D:principal-search-property><D:prop><C:calendar-user-address-set/></D:prop>' +
+    '<D:description xml:lang="en">Calendar user address</D:description></D:principal-search-property>' +
+    "</D:principal-search-property-set>";
+  return xmlResponse(200, body);
 }
 
 const SUPPORTED_COLLATIONS = new Set(["i;ascii-casemap", "i;octet"]);
@@ -2026,7 +2387,7 @@ function hasInvalidFilter(cf: CompFilter): boolean {
 async function handleCalendarQuery(
   _path: string,
   parsed: ParsedPath,
-  _user: User,
+  user: User,
   query: CalendarQuery,
   storage: Storage,
   noTimezones = false,
@@ -2050,7 +2411,7 @@ async function handleCalendarQuery(
     const pfReq: PropFindRequest = { type: "prop", names: query.requestedProps };
     const responses: string[] = [];
     if (matchesFilter(obj.ics, query.filter, tzOffsetMs)) {
-      responses.push(buildObjectResponse(obj.href, obj, pfReq, noTimezones, query.calDataSpec));
+      responses.push(buildObjectResponse(obj.href, obj, pfReq, noTimezones, query.calDataSpec, user));
     }
     return xmlResponse(207, multiStatusXML(responses));
   }
@@ -2066,7 +2427,7 @@ async function handleCalendarQuery(
   const responses: string[] = [];
   for (const obj of objs) {
     if (matchesFilter(obj.ics, query.filter, tzOffsetMs)) {
-      responses.push(buildObjectResponse(obj.href, obj, pfReq, noTimezones, query.calDataSpec));
+      responses.push(buildObjectResponse(obj.href, obj, pfReq, noTimezones, query.calDataSpec, user));
     }
   }
 
@@ -2075,12 +2436,20 @@ async function handleCalendarQuery(
 
 async function handleCalendarMultiget(
   multiget: CalendarMultiget,
-  username: string,
+  user: User,
   storage: Storage,
   noTimezones = false,
 ): Promise<Response> {
   const pfReq: PropFindRequest = multiget.allProp ? { type: "allprop" } : { type: "prop", names: multiget.requestedProps };
   const responses: string[] = [];
+
+  const notFoundEntry = (href: string) => {
+    const ps: PropstatEntry[] = [{
+      props: pfReq.type === "prop" ? pfReq.names.map((n) => buildEmptyProp(n.ns, n.local)).join("") : "",
+      status: 404,
+    }];
+    return responseXML(href, ps);
+  };
 
   for (const href of multiget.hrefs) {
     const p = parsePath(href);
@@ -2088,17 +2457,20 @@ async function handleCalendarMultiget(
       responses.push(notFoundResponseXML(href));
       continue;
     }
-    const targetUsername = p.username || username;
-    const obj = await storage.getObject(targetUsername, p.collection, p.uid);
-    if (!obj) {
-      const ps: PropstatEntry[] = [{
-        props: pfReq.type === "prop" ? pfReq.names.map((n) => buildEmptyProp(n.ns, n.local)).join("") : "",
-        status: 404,
-      }];
-      responses.push(responseXML(href, ps));
+    // Hrefs may point anywhere — enforce per-href access, reporting denied
+    // targets as 404 so resource existence isn't leaked.
+    const denied = await checkAccess(p, user, storage, "read");
+    if (denied) {
+      responses.push(notFoundEntry(href));
       continue;
     }
-    responses.push(buildObjectResponse(href, obj, pfReq, noTimezones));
+    const targetUsername = p.username || user.username;
+    const obj = await storage.getObject(targetUsername, p.collection, p.uid);
+    if (!obj) {
+      responses.push(notFoundEntry(href));
+      continue;
+    }
+    responses.push(buildObjectResponse(href, obj, pfReq, noTimezones, undefined, user));
   }
 
   return xmlResponse(207, multiStatusXML(responses));
@@ -2108,7 +2480,7 @@ async function handleSyncCollection(
   req: Request,
   _path: string,
   parsed: ParsedPath,
-  _user: User,
+  user: User,
   sync: SyncCollectionQuery,
   storage: Storage,
 ): Promise<Response> {
@@ -2118,14 +2490,20 @@ async function handleSyncCollection(
   const { username, collection: colName } = parsed;
 
   if (parsed.type === "calendarHome") {
-    const cals = await storage.listCalendars(username);
+    let cals = await storage.listCalendars(username);
+    if (username !== user.username) {
+      const grants = await storage.listGrantsForSharee(user.username);
+      const granted = new Set(grants.filter((g) => g.owner === username).map((g) => g.calendar));
+      cals = cals.filter((c) => granted.has(c.name));
+    }
     const pfReq: PropFindRequest = sync.allProp ? { type: "allprop" } : { type: "prop", names: sync.requestedProps };
     const responses: string[] = [];
     for (const cal of cals) {
       const rawToken = await storage.getSyncToken(username, cal.name);
+      const sharing = await sharingContext(storage, username, cal.name, user);
       responses.push(buildPropsResponse(
         cal.href,
-        collectionProps(username, cal.name, cal.displayName, rawToken, cal.customProps ?? {}),
+        collectionProps(username, cal.name, cal.displayName, rawToken, cal.customProps ?? {}, undefined, user, sharing),
         pfReq,
       ));
     }
@@ -2157,7 +2535,7 @@ async function handleSyncCollection(
       responses.push(D("response", D("href", href) + D("status", "HTTP/1.1 404 Not Found")));
     } else {
       const obj = await storage.getObject(username, colName, change.uid);
-      if (obj) responses.push(buildObjectResponse(href, obj, pfReq));
+      if (obj) responses.push(buildObjectResponse(href, obj, pfReq, false, undefined, user));
     }
   }
 

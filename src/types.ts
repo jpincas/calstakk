@@ -62,6 +62,18 @@ export interface User {
   isAdmin: boolean;
 }
 
+// ─── Sharing (RFC 3744 subset) ────────────────────────────────────────────────
+
+export type SharingAccess = "read" | "read-write";
+
+/** A grant of access on one owner's calendar collection to another user. */
+export interface SharingGrant {
+  owner: string;    // owning username
+  calendar: string; // collection name under the owner's calendar home
+  sharee: string;   // username granted access
+  access: SharingAccess;
+}
+
 // ─── Path helpers (per-user) ──────────────────────────────────────────────────
 
 export const DEFAULT_CALENDAR_NAME = "default";
