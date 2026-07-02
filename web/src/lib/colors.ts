@@ -17,6 +17,13 @@ export const PALETTE: CollectionColor[] = [
   { bg: '#be185d', text: '#ffffff', light: '#fdf2f8', border: '#f9a8d4', muted: '#fbcfe8' },
 ]
 
+/** Swatch options for manual collection colour overrides (settings + new-list dialogs). */
+export const SETTING_COLORS = [
+  '#2563EB', '#0891B2', '#059669', '#65A30D',
+  '#D97706', '#EA580C', '#DC2626', '#BE185D',
+  '#7C3AED', '#6366F1', '#8B5CF6', '#10B981',
+]
+
 export function collectionColor(collections: string[], name: string): CollectionColor {
   const idx = collections.indexOf(name)
   return PALETTE[Math.max(0, idx) % PALETTE.length]

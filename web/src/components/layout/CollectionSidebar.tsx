@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { Eye, EyeOff, Crosshair, User, Moon, Sun, Inbox, CalendarDays, ListTodo, Users, LogOut } from 'lucide-react'
+import { Eye, EyeOff, Crosshair, User, Moon, Sun, Inbox, CalendarDays, ListTodo, Users, LogOut, Plus } from 'lucide-react'
 import { useDroppable } from '@dnd-kit/core'
 import type { Collection, Me, ViewMode } from '@/types'
 import { useCollectionStore } from '@/state/collection'
 import { clearSession, hasSession } from '@/state/auth'
 import { collectionColor } from '@/lib/colors'
 import { UserAvatar } from '@/components/UserAvatar'
+import { NewCollectionDialog } from '@/components/NewCollectionDialog'
 
 interface Props {
   collections: Collection[]
@@ -135,6 +136,7 @@ export function CollectionSidebar({ collections, me }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
   const qc = useQueryClient()
+  const [newListOpen, setNewListOpen] = useState(false)
   const names = collections.map((c) => c.ref)
 
   const isCalendarMode = viewMode === 'calendar' || location.pathname.startsWith('/calendar')
@@ -281,12 +283,23 @@ export function CollectionSidebar({ collections, me }: Props) {
           )}
 
           {visible.length === 0 && (
-            <p style={{ padding: '8px 10px', fontSize: 16, color: 'var(--ui-text-muted)' }}>
+            <p style={{ padding: '8px 10px 4px', fontSize: 16, color: 'var(--ui-text-muted)' }}>
               No projects yet.
             </p>
           )}
+
+          <div
+            className="sidebar-row"
+            onClick={() => setNewListOpen(true)}
+            style={{ color: 'var(--ui-text-muted)' }}
+          >
+            <Plus style={{ width: 14, height: 14, flexShrink: 0 }} />
+            <span style={{ fontSize: 17, fontWeight: 500 }}>New list</span>
+          </div>
         </div>
       </div>
+
+      <NewCollectionDialog open={newListOpen} onOpenChange={setNewListOpen} />
 
       {/* Footer: account + utilities (icons reveal on hover, like row actions) */}
       <AccountFooter

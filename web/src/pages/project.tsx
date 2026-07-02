@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { caldav } from '@/api'
 import { calendarLinkFor, fmtTime } from '@/lib/dates'
 import { expandEvent, type Occurrence } from '@/lib/recur'
-import { collectionColor } from '@/lib/colors'
+import { collectionColor, SETTING_COLORS } from '@/lib/colors'
 import { useCollectionStore } from '@/state/collection'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,6 +21,7 @@ import { Settings, Plus, Share2, Eye } from 'lucide-react'
 import { PageBar } from '@/components/layout/PageBar'
 import { TaskList } from '@/components/TaskList'
 import { ShareDialog } from '@/components/ShareDialog'
+import { NewTaskDialog } from '@/components/NewTaskDialog'
 import {
   format,
   isToday,
@@ -37,32 +38,10 @@ import type { Collection, Todo, CalEvent } from '@/types'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const SETTING_COLORS = [
-  '#2563EB', '#0891B2', '#059669', '#65A30D',
-  '#D97706', '#EA580C', '#DC2626', '#BE185D',
-  '#7C3AED', '#6366F1', '#8B5CF6', '#10B981',
-]
-
 const BUCKET_ORDER = ['Today', 'This Week', 'This Month', 'Next Month', 'Later'] as const
 type Bucket = typeof BUCKET_ORDER[number]
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-interface TodoForm {
-  uid: string
-  summary: string
-  description: string
-  due: string
-  status: string
-}
-
-const emptyTodo = (): TodoForm => ({
-  uid: crypto.randomUUID(),
-  summary: '',
-  description: '',
-  due: '',
-  status: 'NEEDS-ACTION',
-})
 
 interface EventForm {
   uid: string
@@ -192,8 +171,7 @@ export function ProjectPage() {
 
   // ── UI state ─────────────────────────────────────────────────────────────
 
-  const [form, setForm] = useState<TodoForm | null>(null)
-  const [isNew, setIsNew] = useState(false)
+  const [newTaskOpen, setNewTaskOpen] = useState(false)
   const [eventForm, setEventForm] = useState<EventForm | null>(null)
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState('')
@@ -225,27 +203,6 @@ export function ProjectPage() {
   }
 
   // ── Mutations ─────────────────────────────────────────────────────────────
-
-  const todoSave = useMutation({
-    mutationFn: (f: TodoForm) => {
-      const payload = {
-        uid: f.uid || crypto.randomUUID(),
-        summary: f.summary,
-        description: f.description || undefined,
-        due: f.due ? f.due.replace(/-/g, '') : undefined,
-        status: f.status,
-      }
-      return isNew
-        ? caldav.createTodo(colName!, payload)
-        : caldav.updateTodo(colName!, payload)
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['todos', colName] })
-      setForm(null)
-      toast.success('Task saved')
-    },
-    onError: (e) => toast.error(String(e)),
-  })
 
   const eventSave = useMutation({
     mutationFn: (f: EventForm) =>
@@ -550,7 +507,7 @@ export function ProjectPage() {
             )}
             {!readOnly && (
             <button
-              onClick={() => { setForm(emptyTodo()); setIsNew(true) }}
+              onClick={() => setNewTaskOpen(true)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 5,
                 padding: '5px 10px', borderRadius: 7,
@@ -620,44 +577,7 @@ export function ProjectPage() {
         )}
       </div>
 
-      {/* New task modal — creation only */}
-      <Dialog open={!!form} onOpenChange={(o) => !o && setForm(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>New task</DialogTitle>
-          </DialogHeader>
-          {form && (
-            <div className="grid gap-3">
-              <div>
-                <Label>Title</Label>
-                <Input value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} autoFocus />
-              </div>
-              <div>
-                <Label>Description</Label>
-                <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-              </div>
-              <div>
-                <Label>Due date</Label>
-                <Input type="date" value={form.due} onChange={(e) => setForm({ ...form, due: e.target.value })} />
-              </div>
-              <div>
-                <Label>Status</Label>
-                <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm">
-                  <option value="NEEDS-ACTION">To do</option>
-                  <option value="IN-PROCESS">In progress</option>
-                  <option value="COMPLETED">Completed</option>
-                  <option value="CANCELLED">Cancelled</option>
-                </select>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button onClick={() => todoSave.mutate(form!)} disabled={todoSave.isPending || !form?.summary} style={{ background: color.bg, color: '#fff', border: 'none' }}>
-              Create
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <NewTaskDialog collection={colName} accentColor={color.bg} open={newTaskOpen} onOpenChange={setNewTaskOpen} />
 
       {/* New event modal */}
       <Dialog open={!!eventForm} onOpenChange={(o) => !o && setEventForm(null)}>

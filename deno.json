@@ -5,6 +5,7 @@
     "backend": "deno run --watch --unstable-kv --allow-net --allow-read --allow-write --allow-env --env-file=.env.local --env-file=.env server.ts",
     "dev": "bash scripts/dev.sh",
     "seed": "deno run --allow-net --allow-env --env-file=.env.local --env-file=.env scripts/seed.ts",
+    "web-install": "cd web && npm ci --ignore-scripts",
     "web-dev": "cd web && npm run dev",
     "web-lint": "cd web && npm run lint",
     "web-build": "cd web && npm run build",
@@ -40,5 +41,14 @@
     "useTabs": false,
     "lineWidth": 100,
     "indentWidth": 2
+  },
+  "deploy": {
+    "org": "jpincas",
+    "app": "calstakk"
   }
 }
+
+
+
+
+

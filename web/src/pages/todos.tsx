@@ -1,27 +1,19 @@
 import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useParams, useLocation } from 'react-router-dom'
 import { caldav } from '@/api'
 import { collectionColor } from '@/lib/colors'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { toast } from 'sonner'
 import { Plus, Inbox } from 'lucide-react'
 import { PageBar } from '@/components/layout/PageBar'
 import { TaskList } from '@/components/TaskList'
+import { NewTaskDialog } from '@/components/NewTaskDialog'
 import type { Collection } from '@/types'
-
-interface TodoForm { uid: string; summary: string; description: string; due: string; status: string }
-const emptyForm = (uid = ''): TodoForm => ({ uid, summary: '', description: '', due: '', status: 'NEEDS-ACTION' })
 
 export function TodosPage() {
   const { collection: collectionParam } = useParams<{ collection?: string }>()
   const location = useLocation()
   const collection = collectionParam ?? (location.pathname === '/inbox' ? 'capture' : undefined)
 
-  const qc = useQueryClient()
   const { data: collections = [] } = useQuery({
     queryKey: ['collections'],
     queryFn: () => caldav.listCollections(),
@@ -35,24 +27,7 @@ export function TodosPage() {
   // 'capture' (the /inbox route) is always own/writable; guard the param path anyway.
   const readOnly = collections.find((c: Collection) => c.ref === collection)?.myAccess === 'read'
 
-  const [newForm, setNewForm] = useState<TodoForm | null>(null)
-
-  const createTodo = useMutation({
-    mutationFn: (f: TodoForm) =>
-      caldav.createTodo(collection!, {
-        uid: f.uid || crypto.randomUUID(),
-        summary: f.summary,
-        description: f.description || undefined,
-        due: f.due || undefined,
-        status: f.status,
-      }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['todos', collection] })
-      setNewForm(null)
-      toast.success('Task created')
-    },
-    onError: (e) => toast.error(String(e)),
-  })
+  const [newTaskOpen, setNewTaskOpen] = useState(false)
 
   if (!collection) {
     return (
@@ -70,7 +45,7 @@ export function TodosPage() {
         controls={
           readOnly ? undefined : (
             <button
-              onClick={() => setNewForm(emptyForm(crypto.randomUUID()))}
+              onClick={() => setNewTaskOpen(true)}
               style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 7, border: 'none', background: '#3B82F6', color: '#fff', fontSize: 16, fontWeight: 600, cursor: 'pointer' }}
             >
               <Plus style={{ width: 13, height: 13 }} />
@@ -84,31 +59,7 @@ export function TodosPage() {
         <TaskList collection={collection} accentColor={color.bg} readOnly={readOnly} />
       </div>
 
-      {/* New task modal — full-featured creation */}
-      <Dialog open={!!newForm} onOpenChange={(o) => !o && setNewForm(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>New task</DialogTitle></DialogHeader>
-          {newForm && (
-            <div className="grid gap-3">
-              <div><Label>Title</Label><Input value={newForm.summary} onChange={(e) => setNewForm({ ...newForm, summary: e.target.value })} autoFocus /></div>
-              <div><Label>Description</Label><Input value={newForm.description} onChange={(e) => setNewForm({ ...newForm, description: e.target.value })} /></div>
-              <div><Label>Due date</Label><Input type="date" value={newForm.due} onChange={(e) => setNewForm({ ...newForm, due: e.target.value })} /></div>
-              <div>
-                <Label>Status</Label>
-                <select value={newForm.status} onChange={(e) => setNewForm({ ...newForm, status: e.target.value })} className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm">
-                  <option value="NEEDS-ACTION">To do</option>
-                  <option value="IN-PROCESS">In progress</option>
-                  <option value="COMPLETED">Completed</option>
-                  <option value="CANCELLED">Cancelled</option>
-                </select>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button onClick={() => createTodo.mutate(newForm!)} disabled={createTodo.isPending || !newForm?.summary} style={{ background: color.bg, color: '#fff', border: 'none' }}>Create</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <NewTaskDialog collection={collection} accentColor={color.bg} open={newTaskOpen} onOpenChange={setNewTaskOpen} />
     </div>
   )
 }
