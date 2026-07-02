@@ -1207,6 +1207,111 @@ Deno.test("RFC 4918 §14.23 PROPPATCH remove of non-existent property is not an 
   });
 });
 
+Deno.test("RFC 4918 §14.23 PROPPATCH remove deletes a dead property from a collection", async () => {
+  await withServer(async (s) => {
+    await s.mkcol("rm-dead-col");
+
+    const setBody =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<D:propertyupdate xmlns:D="DAV:" xmlns:E="http://example.com/test/">' +
+      "<D:set><D:prop><E:removeme>transient</E:removeme></D:prop></D:set>" +
+      "</D:propertyupdate>";
+    const setResp = await s.do("PROPPATCH", collectionPath("rm-dead-col"), xmlContentType(), setBody);
+    assertEquals(setResp.status, 207);
+
+    const rmBody =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<D:propertyupdate xmlns:D="DAV:" xmlns:E="http://example.com/test/">' +
+      "<D:remove><D:prop><E:removeme/></D:prop></D:remove>" +
+      "</D:propertyupdate>";
+    const rmResp = await s.do("PROPPATCH", collectionPath("rm-dead-col"), xmlContentType(), rmBody);
+    assertEquals(rmResp.status, 207);
+    const rmMs = parseMultistatus(rmResp.body);
+    const rmProp = rmMs.response(collectionPath("rm-dead-col"))?.prop("removeme");
+    assertEquals(rmProp?.status, 200, "remove of an existing dead property must report 200");
+
+    const pfResp = await s.do(
+      "PROPFIND",
+      collectionPath("rm-dead-col"),
+      withHeaders(depthHeader("0"), xmlContentType()),
+      propfindProps("http://example.com/test/", "removeme"),
+    );
+    assertEquals(pfResp.status, 207);
+    const pfMs = parseMultistatus(pfResp.body);
+    const pfProp = pfMs.response(collectionPath("rm-dead-col"))?.prop("removeme");
+    assertEquals(
+      pfProp === undefined || pfProp.status === 404,
+      true,
+      "a removed dead property must no longer be reported by PROPFIND (expected 404 propstat)",
+    );
+  });
+});
+
+Deno.test("RFC 4918 §14.23 PROPPATCH remove deletes a dead property from a calendar object", async () => {
+  await withServer(async (s) => {
+    await s.mkcol("rm-dead-obj-col");
+    await s.putTodo("rm-dead-obj-col", "rm-dead-1");
+    const objPath = objectPath("rm-dead-obj-col", "rm-dead-1");
+
+    const setBody =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<D:propertyupdate xmlns:D="DAV:" xmlns:E="http://example.com/test/">' +
+      "<D:set><D:prop><E:objprop>transient</E:objprop></D:prop></D:set>" +
+      "</D:propertyupdate>";
+    const setResp = await s.do("PROPPATCH", objPath, xmlContentType(), setBody);
+    assertEquals(setResp.status, 207);
+
+    const rmBody =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<D:propertyupdate xmlns:D="DAV:" xmlns:E="http://example.com/test/">' +
+      "<D:remove><D:prop><E:objprop/></D:prop></D:remove>" +
+      "</D:propertyupdate>";
+    const rmResp = await s.do("PROPPATCH", objPath, xmlContentType(), rmBody);
+    assertEquals(rmResp.status, 207);
+
+    const pfResp = await s.do(
+      "PROPFIND",
+      objPath,
+      withHeaders(depthHeader("0"), xmlContentType()),
+      propfindProps("http://example.com/test/", "objprop"),
+    );
+    assertEquals(pfResp.status, 207);
+    const pfMs = parseMultistatus(pfResp.body);
+    const pfProp = pfMs.response(objPath)?.prop("objprop");
+    assertEquals(
+      pfProp === undefined || pfProp.status === 404,
+      true,
+      "a removed dead property must no longer be reported by PROPFIND on the object (expected 404 propstat)",
+    );
+  });
+});
+
+Deno.test(
+  "RFC 4918 §9.2.1 PROPPATCH attempt to remove protected property returns 403 with cannot-modify-protected-property",
+  async () => {
+    await withServer(async (s) => {
+      await s.mkcol("rm-protected-col");
+
+      const rmBody =
+        '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<D:propertyupdate xmlns:D="DAV:">' +
+        "<D:remove><D:prop><D:resourcetype/></D:prop></D:remove>" +
+        "</D:propertyupdate>";
+      const rmResp = await s.do("PROPPATCH", collectionPath("rm-protected-col"), xmlContentType(), rmBody);
+      assertEquals(rmResp.status, 207, "PROPPATCH attempting to remove a protected property returns 207");
+      const ms = parseMultistatus(rmResp.body);
+      const p = ms.response(collectionPath("rm-protected-col"))?.prop("resourcetype");
+      assertEquals(p !== undefined, true);
+      assertEquals(p!.status, 403, "resourcetype is protected; remove must fail with a 403 propstat");
+      assertEquals(
+        rmResp.body.includes("cannot-modify-protected-property"),
+        true,
+        "error body SHOULD contain cannot-modify-protected-property precondition element",
+      );
+    });
+  },
+);
+
 Deno.test("RFC 4918 §14.26 PROPPATCH xml:lang attribute on dead property is preserved and returned by PROPFIND", async () => {
   await withServer(async (s) => {
     await s.mkcol("xmllang-col");

@@ -69,6 +69,8 @@ export interface Storage {
   deleteCalendar(username: string, name: string): Promise<void>;
   updateCalendarDisplayName(username: string, name: string, displayName: string): Promise<void>;
   updateCalendarProp(username: string, name: string, key: string, value: string): Promise<void>;
+  /** Remove a dead property; removing an absent property is a no-op (RFC 4918 §14.23). */
+  removeCalendarProp(username: string, name: string, key: string): Promise<void>;
 
   // ── Calendar objects ───────────────────────────────────────────────────────
   listObjects(username: string, calendarName: string): Promise<CalendarObject[]>;
@@ -80,6 +82,8 @@ export interface Storage {
   putObject(username: string, calendarName: string, uid: string, ics: string, icalUID: string): Promise<CalendarObject>;
   deleteObject(username: string, calendarName: string, uid: string): Promise<void>;
   updateObjectProp(username: string, calendarName: string, uid: string, key: string, rawXml: string): Promise<void>;
+  /** Remove a dead property; removing an absent property is a no-op (RFC 4918 §14.23). */
+  removeObjectProp(username: string, calendarName: string, uid: string, key: string): Promise<void>;
   copyObject(username: string, srcCalName: string, srcUid: string, dstCalName: string, dstUid: string): Promise<CalendarObject>;
   moveObject(username: string, srcCalName: string, srcUid: string, dstCalName: string, dstUid: string): Promise<CalendarObject>;
 
@@ -256,6 +260,12 @@ export class MemoryStorage implements Storage {
     c.customProps[key] = value;
   }
 
+  async removeCalendarProp(username: string, name: string, key: string): Promise<void> {
+    const c = this._cals(username).get(name);
+    if (!c) throw new Error(`Calendar ${name} not found`);
+    delete c.customProps[key];
+  }
+
   // ── Objects ────────────────────────────────────────────────────────────────
 
   async listObjects(username: string, calendarName: string): Promise<CalendarObject[]> {
@@ -337,6 +347,14 @@ export class MemoryStorage implements Storage {
     const obj = c.objects.get(uid);
     if (!obj) throw new Error(`Object ${uid} not found`);
     obj.deadProps[key] = rawXml;
+  }
+
+  async removeObjectProp(username: string, calendarName: string, uid: string, key: string): Promise<void> {
+    const c = this._cals(username).get(calendarName);
+    if (!c) throw new Error(`Calendar ${calendarName} not found`);
+    const obj = c.objects.get(uid);
+    if (!obj) throw new Error(`Object ${uid} not found`);
+    delete obj.deadProps[key];
   }
 
   async copyObject(username: string, srcCalName: string, srcUid: string, dstCalName: string, dstUid: string): Promise<CalendarObject> {

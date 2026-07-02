@@ -12,7 +12,7 @@ A private, self-hosted CalDAV/VTODO server + web UI. Goal: push the CalDAV (RFC 
 
 | Layer | Status |
 |---|---|
-| CalDAV server (`src/`) | ✅ Spec-complete, incl. multi-user sharing (RFC 3744 subset) + admin API. 562/562 conformance/API tests passing. |
+| CalDAV server (`src/`) | ✅ Spec-complete, incl. multi-user sharing (RFC 3744 subset) + admin API. 567/567 conformance/API tests passing. |
 | JS/TS CalDAV client (`web/src/api/`) | ✅ Complete. Covers all operations the UI needs, incl. auth, sharing, admin. |
 | MCP server (`mcp/`) | ✅ Complete. 29 tools covering the full surface (agents' entry point); reuses the CalDAV client. |
 | Web UI (`web/src/`) | 🔨 Under active development. Multi-user (login, sharing, user admin) shipped. |
@@ -212,7 +212,7 @@ load `.env.local` then `.env` (first wins; real shell env overrides both):
 
 ### The gate — run before committing
 ```bash
-~/.deno/bin/deno task check        # deno lint + type-check + 524 tests, then web lint + build
+~/.deno/bin/deno task check        # deno lint + type-check + 571 tests, then web lint + build
 ```
 `check` is the one complete gate — backend **and** frontend. The pre-commit hook
 runs it; don't `--no-verify` past it. Fast inner loop: `deno task iterate`
@@ -230,7 +230,7 @@ runs it; don't `--no-verify` past it. Fast inner loop: `deno task iterate`
 
 ## Test Suite
 
-524 conformance tests across 12 RFC files in `tests/conformance/`. Tests are spec-first — written against RFC text, not implementation. **All 524 must stay green.** Never soften, skip, or delete a test. If a backend change is needed to fix a test, get user sign-off first.
+553 conformance tests across 13 RFC files in `tests/conformance/`. Tests are spec-first — written against RFC text, not implementation. **All 553 must stay green.** Never soften, skip, or delete a test. If a backend change is needed to fix a test, get user sign-off first.
 
 ## Rules
 

@@ -1878,7 +1878,8 @@ async function handleProppatch(
   if (body.trim() && !isWellFormedXML(body)) return respond(400, "Malformed XML request body");
   const ops = parseProppatch(body);
 
-  const hasProtected = ops.some((op) => op.type === "set" && PROTECTED_PROPS.has(makeKey(op.ns, op.local)));
+  // Protected properties can be neither set nor removed (RFC 4918 §9.2/§15).
+  const hasProtected = ops.some((op) => PROTECTED_PROPS.has(makeKey(op.ns, op.local)));
 
   for (const op of ops) {
     if (op.type === "set" && op.ns === "urn:ietf:params:xml:ns:caldav" && op.local === "calendar-availability") {
@@ -1915,6 +1916,13 @@ async function handleProppatch(
   if (!hasProtected) {
     if (parsed.type === "collection") {
       for (const op of ops) {
+        if (op.type === "remove") {
+          if (op.ns === "DAV:" && op.local === "displayname") {
+            await storage.updateCalendarDisplayName(username, colName, "");
+          } else {
+            await storage.removeCalendarProp(username, colName, `${op.ns}\x00${op.local}`);
+          }
+        }
         if (op.type === "set") {
           if (op.ns === "DAV:" && op.local === "displayname") {
             await storage.updateCalendarDisplayName(username, colName, op.value);
@@ -1944,6 +1952,8 @@ async function handleProppatch(
       for (const op of ops) {
         if (op.type === "set") {
           await storage.updateObjectProp(username, colName, uid, `${op.ns}\x00${op.local}`, op.rawXml);
+        } else if (op.type === "remove") {
+          await storage.removeObjectProp(username, colName, uid, `${op.ns}\x00${op.local}`);
         }
       }
     }
@@ -1951,7 +1961,7 @@ async function handleProppatch(
 
   const propstats = ops.map((op) => {
     const el = buildEmptyProp(op.ns, op.local);
-    const isProtected = op.type === "set" && PROTECTED_PROPS.has(makeKey(op.ns, op.local));
+    const isProtected = PROTECTED_PROPS.has(makeKey(op.ns, op.local));
     let statusCode: number;
     let errorXml = "";
     if (isProtected) {

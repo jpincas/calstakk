@@ -257,6 +257,14 @@ export class KVStorage implements Storage {
     }));
   }
 
+  async removeCalendarProp(username: string, name: string, key: string): Promise<void> {
+    await this._patchMeta(username, name, (m) => {
+      const customProps = { ...m.customProps };
+      delete customProps[key];
+      return { ...m, customProps };
+    });
+  }
+
   // ── Objects ────────────────────────────────────────────────────────────────
 
   async listObjects(username: string, calendarName: string): Promise<CalendarObject[]> {
@@ -372,6 +380,19 @@ export class KVStorage implements Storage {
         ...entry.value,
         deadProps: { ...entry.value.deadProps, [key]: rawXml },
       };
+      const res = await this.kv.atomic().check(entry).set(oKey, updated).commit();
+      if (res.ok) return;
+    }
+  }
+
+  async removeObjectProp(username: string, calendarName: string, uid: string, key: string): Promise<void> {
+    const oKey = objKey(username, calendarName, uid);
+    while (true) {
+      const entry = await this.kv.get<StoredObj>(oKey);
+      if (!entry.value) throw new Error(`Object ${uid} not found`);
+      const deadProps = { ...entry.value.deadProps };
+      delete deadProps[key];
+      const updated: StoredObj = { ...entry.value, deadProps };
       const res = await this.kv.atomic().check(entry).set(oKey, updated).commit();
       if (res.ok) return;
     }

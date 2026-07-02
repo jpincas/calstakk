@@ -255,22 +255,25 @@ export class CalDAVClient {
   ): Promise<void> {
     const path = await this.colPath(name)
     const sets: string[] = []
+    const removes: string[] = []
     if (props.displayName !== undefined)
       sets.push(`<d:displayname>${escXml(props.displayName)}</d:displayname>`)
     if (props.color !== undefined)
       sets.push(`<a:calendar-color xmlns:a="${APPLE_NS}">${escXml(props.color)}</a:calendar-color>`)
     if (props.description !== undefined)
       sets.push(`<c:calendar-description xmlns:c="${CALDAV_NS}">${escXml(props.description)}</c:calendar-description>`)
-    if (props.group !== undefined) {
-      // Clearing writes an empty value rather than a d:remove: the server acks
-      // remove ops without applying them, and reads already treat '' as unset.
-      sets.push(`<cs:group xmlns:cs="${CS_NS}">${escXml(props.group ?? '')}</cs:group>`)
+    if (props.group === null) {
+      removes.push(`<cs:group xmlns:cs="${CS_NS}"/>`)
+    } else if (props.group !== undefined) {
+      sets.push(`<cs:group xmlns:cs="${CS_NS}">${escXml(props.group)}</cs:group>`)
     }
-    if (sets.length === 0) return
+    if (sets.length === 0 && removes.length === 0) return
 
+    const setPart = sets.length > 0 ? `<d:set><d:prop>${sets.join('')}</d:prop></d:set>` : ''
+    const removePart = removes.length > 0 ? `<d:remove><d:prop>${removes.join('')}</d:prop></d:remove>` : ''
     const body = `<?xml version="1.0" encoding="UTF-8"?>
 <d:propertyupdate xmlns:d="DAV:" xmlns:c="${CALDAV_NS}" xmlns:a="${APPLE_NS}">
-  <d:set><d:prop>${sets.join('')}</d:prop></d:set>
+  ${setPart}${removePart}
 </d:propertyupdate>`
     const res = await fetch(path, {
       method: 'PROPPATCH',
