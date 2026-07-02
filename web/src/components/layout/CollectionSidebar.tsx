@@ -1,5 +1,6 @@
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Eye, EyeOff, Crosshair, User, Moon, Sun, Inbox, CalendarDays, ListTodo } from 'lucide-react'
+import { useDroppable } from '@dnd-kit/core'
 import type { Collection, ViewMode } from '@/types'
 import { useCollectionStore } from '@/state/collection'
 import { collectionColor } from '@/lib/colors'
@@ -22,6 +23,95 @@ const NAV_ITEMS: NavItem[] = [
   { mode: 'tasks',    icon: ListTodo,     label: 'Tasks',    path: '/tasks',    color: '#10B981' },
   { mode: 'calendar', icon: CalendarDays, label: 'Calendar', path: '/calendar', color: '#6366F1' },
 ]
+
+interface CollectionRowProps {
+  col: Collection
+  dotColor: string
+  isActive: boolean
+  isHidden: boolean
+  isFocused: boolean
+  isCalendarMode: boolean
+  onRowClick: () => void
+  onFocus: () => void
+  onToggleHidden: () => void
+}
+
+function CollectionRow({
+  col, dotColor, isActive, isHidden, isFocused, isCalendarMode, onRowClick, onFocus, onToggleHidden,
+}: CollectionRowProps) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `collection:${col.name}`,
+    data: { type: 'collection', name: col.name },
+  })
+
+  return (
+    <div
+      ref={setNodeRef}
+      className="sidebar-row"
+      data-active={isActive}
+      onClick={onRowClick}
+      style={{
+        opacity: isCalendarMode && isHidden && !isFocused ? 0.4 : 1,
+        outline: isOver ? '2px solid var(--sidebar-primary)' : 'none',
+        outlineOffset: -2,
+        background: isOver ? 'var(--sidebar-accent)' : undefined,
+      }}
+    >
+      <span
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: '50%',
+          background: dotColor,
+          flexShrink: 0,
+          boxShadow: isFocused ? `0 0 0 2px ${dotColor}44` : 'none',
+          transition: 'box-shadow 150ms',
+        }}
+      />
+
+      <span
+        style={{
+          fontSize: 17,
+          fontWeight: 500,
+          flex: 1,
+          minWidth: 0,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          color: isActive ? 'var(--sidebar-primary)' : 'inherit',
+        }}
+      >
+        {col.display_name}
+      </span>
+
+      {isCalendarMode && (
+        <div
+          className="sidebar-row-actions"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="sidebar-row-icon-btn"
+            data-active={isFocused}
+            title={isFocused ? 'Unfocus' : 'Focus only this'}
+            onClick={onFocus}
+          >
+            <Crosshair style={{ width: 12, height: 12 }} />
+          </button>
+          <button
+            className="sidebar-row-icon-btn"
+            data-active={isHidden}
+            title={isHidden ? 'Show in calendar' : 'Hide from calendar'}
+            onClick={onToggleHidden}
+          >
+            {isHidden
+              ? <EyeOff style={{ width: 12, height: 12 }} />
+              : <Eye style={{ width: 12, height: 12 }} />}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function CollectionSidebar({ collections }: Props) {
   const {
@@ -61,72 +151,19 @@ export function CollectionSidebar({ collections }: Props) {
 
   const renderRow = (col: Collection) => {
     const color = collectionColor(names, col.name)
-    const dotColor = col.color ?? color.bg
-    const isActive = activeCollection === col.name
-    const isHidden = hiddenCollections.includes(col.name)
-    const isFocused = focusedCollection === col.name
-
     return (
-      <div
+      <CollectionRow
         key={col.name}
-        className="sidebar-row"
-        data-active={isActive}
-        onClick={() => handleRowClick(col)}
-        style={{ opacity: isCalendarMode && isHidden && !isFocused ? 0.4 : 1 }}
-      >
-        <span
-          style={{
-            width: 7,
-            height: 7,
-            borderRadius: '50%',
-            background: dotColor,
-            flexShrink: 0,
-            boxShadow: isFocused ? `0 0 0 2px ${dotColor}44` : 'none',
-            transition: 'box-shadow 150ms',
-          }}
-        />
-
-        <span
-          style={{
-            fontSize: 13,
-            fontWeight: isActive ? 500 : 400,
-            flex: 1,
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            color: isActive ? 'var(--sidebar-primary)' : 'inherit',
-          }}
-        >
-          {col.display_name}
-        </span>
-
-        {isCalendarMode && (
-          <div
-            className="sidebar-row-actions"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              className="sidebar-row-icon-btn"
-              data-active={isFocused}
-              title={isFocused ? 'Unfocus' : 'Focus only this'}
-              onClick={() => setFocusedCollection(col.name)}
-            >
-              <Crosshair style={{ width: 12, height: 12 }} />
-            </button>
-            <button
-              className="sidebar-row-icon-btn"
-              data-active={isHidden}
-              title={isHidden ? 'Show in calendar' : 'Hide from calendar'}
-              onClick={() => toggleCollectionHidden(col.name)}
-            >
-              {isHidden
-                ? <EyeOff style={{ width: 12, height: 12 }} />
-                : <Eye style={{ width: 12, height: 12 }} />}
-            </button>
-          </div>
-        )}
-      </div>
+        col={col}
+        dotColor={col.color ?? color.bg}
+        isActive={activeCollection === col.name}
+        isHidden={hiddenCollections.includes(col.name)}
+        isFocused={focusedCollection === col.name}
+        isCalendarMode={isCalendarMode}
+        onRowClick={() => handleRowClick(col)}
+        onFocus={() => setFocusedCollection(col.name)}
+        onToggleHidden={() => toggleCollectionHidden(col.name)}
+      />
     )
   }
 
@@ -160,12 +197,12 @@ export function CollectionSidebar({ collections }: Props) {
                     flexShrink: 0,
                     color: isActive ? item.color : 'var(--sidebar-foreground)',
                   }}
-                  strokeWidth={isActive ? 2.3 : 1.8}
+                  strokeWidth={isActive ? 2.3 : 2}
                 />
                 <span
                   style={{
-                    fontSize: 13,
-                    fontWeight: isActive ? 500 : 400,
+                    fontSize: 17,
+                    fontWeight: 500,
                     color: isActive ? 'var(--sidebar-primary)' : 'inherit',
                   }}
                 >
@@ -189,7 +226,7 @@ export function CollectionSidebar({ collections }: Props) {
             <div key={groupName}>
               <div style={{ padding: '10px 10px 4px' }}>
                 <span style={{
-                  fontSize: 10,
+                  fontSize: 13,
                   fontWeight: 600,
                   letterSpacing: '0.08em',
                   textTransform: 'uppercase',
@@ -203,7 +240,7 @@ export function CollectionSidebar({ collections }: Props) {
           ))}
 
           {visible.length === 0 && (
-            <p style={{ padding: '8px 10px', fontSize: 12, color: 'var(--ui-text-muted)' }}>
+            <p style={{ padding: '8px 10px', fontSize: 16, color: 'var(--ui-text-muted)' }}>
               No projects yet.
             </p>
           )}
@@ -236,7 +273,7 @@ export function CollectionSidebar({ collections }: Props) {
         </div>
         <span
           style={{
-            fontSize: 12,
+            fontSize: 16,
             fontWeight: 500,
             color: 'var(--sidebar-foreground)',
             flex: 1,

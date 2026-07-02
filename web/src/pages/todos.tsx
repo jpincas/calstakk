@@ -54,7 +54,7 @@ export function TodosPage() {
   if (!collection) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-        <p style={{ fontSize: 13, color: 'var(--ui-text-muted)' }}>Select a project from the sidebar.</p>
+        <p style={{ fontSize: 17, color: 'var(--ui-text-muted)' }}>Select a project from the sidebar.</p>
       </div>
     )
   }
@@ -67,7 +67,7 @@ export function TodosPage() {
         controls={
           <button
             onClick={() => setNewForm(emptyForm(crypto.randomUUID()))}
-            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 7, border: 'none', background: '#3B82F6', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 7, border: 'none', background: '#3B82F6', color: '#fff', fontSize: 16, fontWeight: 600, cursor: 'pointer' }}
           >
             <Plus style={{ width: 13, height: 13 }} />
             New task

@@ -12,6 +12,9 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  optimizeDeps: {
+    include: ['react-big-calendar/lib/addons/dragAndDrop'],
+  },
   server: {
     // Pin the port. strictPort makes vite FAIL if 5173 is taken rather than
     // silently drifting to 5174+ — so a stale server surfaces loudly instead of

@@ -291,6 +291,12 @@ export class CalDAVClient {
     await this._delete(objectPath(home, collection, uid))
   }
 
+  /** Move a todo to a different collection, dropping section/order so it lands ungrouped there. */
+  async moveTodo(from: string, to: string, todo: Todo): Promise<void> {
+    await this.createTodo(to, { ...todo, section_id: undefined, x_sort_order: undefined })
+    await this.deleteTodo(from, todo.uid)
+  }
+
   // ── Sections ─────────────────────────────────────────────────────────────────
 
   /**

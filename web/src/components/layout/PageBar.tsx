@@ -29,7 +29,7 @@ export function PageBar({ icon, accentColor, title, detail, controls }: PageBarP
           {icon}
         </div>
       )}
-      <div style={{ fontSize: 15, fontWeight: 700, color: 'inherit', flexShrink: 0 }}>
+      <div style={{ fontSize: 20, fontWeight: 700, color: 'inherit', flexShrink: 0 }}>
         {title}
       </div>
       {detail !== undefined && detail !== null && (
@@ -38,7 +38,7 @@ export function PageBar({ icon, accentColor, title, detail, controls }: PageBarP
             display: 'flex',
             alignItems: 'center',
             gap: 6,
-            fontSize: 13,
+            fontSize: 17,
             color: colored ? 'rgba(255,255,255,0.75)' : 'var(--muted-foreground)',
           }}
         >

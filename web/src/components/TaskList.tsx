@@ -10,19 +10,23 @@ import { caldav } from '@/api'
 import { parseCalDate, fmtDateShort } from '@/lib/dates'
 import { toast } from 'sonner'
 import {
-  CheckCircle2, Circle, ChevronDown, ChevronUp, Plus, Trash2, Check, X,
+  CheckCircle2, Circle, ChevronDown, ChevronUp, Plus, Trash2, Check, X, Sun,
 } from 'lucide-react'
 import { TodoEditPanel } from '@/components/TodoEditPanel'
 import {
-  DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
+  ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem,
+  ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent,
+} from '@/components/ui/context-menu'
+import {
+  DragOverlay, useDndMonitor,
   type DragEndEvent, type DragStartEvent,
-  closestCorners, useDroppable,
+  useDroppable,
 } from '@dnd-kit/core'
 import {
   SortableContext, useSortable, arrayMove, verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import type { Todo, Section } from '@/types'
+import type { Todo, Section, Collection } from '@/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -89,15 +93,15 @@ function TodoRow({
             onBlur={onEditBlur}
             onKeyDown={onEditKeyDown}
             onClick={(e) => e.stopPropagation()}
-            style={{ width: '100%', fontSize: 13, lineHeight: '18px', height: '18px', color: 'var(--foreground)', background: 'transparent', border: 'none', outline: 'none', padding: 0, margin: 0, fontFamily: 'inherit', display: 'block' }}
+            style={{ width: '100%', fontSize: 17, lineHeight: '18px', height: '18px', color: 'var(--foreground)', background: 'transparent', border: 'none', outline: 'none', padding: 0, margin: 0, fontFamily: 'inherit', display: 'block' }}
           />
         ) : (
           <>
-            <p style={{ fontSize: 13, lineHeight: '18px', color: done ? 'var(--ui-text-muted)' : 'var(--foreground)', margin: 0, textDecoration: done ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <p style={{ fontSize: 17, lineHeight: '18px', color: done ? 'var(--ui-text-muted)' : 'var(--foreground)', margin: 0, textDecoration: done ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {todo.summary}
             </p>
             {todo.description && (
-              <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <p style={{ fontSize: 14, color: 'var(--muted-foreground)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {todo.description}
               </p>
             )}
@@ -105,9 +109,16 @@ function TodoRow({
         )}
       </div>
       {!isEditingTitle && due && (
-        <span style={{ fontSize: 11, fontWeight: 500, flexShrink: 0, color: overdue ? 'var(--destructive)' : dueToday ? '#F59E0B' : 'var(--muted-foreground)' }}>
-          {fmtDateShort(due)}
-        </span>
+        dueToday ? (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 14, fontWeight: 500, flexShrink: 0, color: '#F59E0B' }}>
+            <Sun style={{ width: 13, height: 13 }} />
+            Today
+          </span>
+        ) : (
+          <span style={{ fontSize: 14, fontWeight: 500, flexShrink: 0, color: overdue ? 'var(--destructive)' : 'var(--muted-foreground)' }}>
+            {fmtDateShort(due)}
+          </span>
+        )
       )}
     </div>
   )
@@ -155,9 +166,43 @@ function InlineNewRow({ value, accentColor, inputRef, onChange, onKeyDown, onBlu
         onKeyDown={onKeyDown}
         onBlur={onBlur}
         placeholder="Task name…"
-        style={{ flex: 1, fontSize: 13, lineHeight: '18px', height: '18px', color: 'var(--foreground)', background: 'transparent', border: 'none', outline: 'none', padding: 0, margin: 0, fontFamily: 'inherit', display: 'block' }}
+        style={{ flex: 1, fontSize: 17, lineHeight: '18px', height: '18px', color: 'var(--foreground)', background: 'transparent', border: 'none', outline: 'none', padding: 0, margin: 0, fontFamily: 'inherit', display: 'block' }}
       />
     </div>
+  )
+}
+
+// ── TaskContextMenu (module-level) ────────────────────────────────────────────
+
+interface TaskContextMenuProps {
+  children: React.ReactNode
+  collections: Collection[]
+  currentCollection: string
+  onMove: (targetCollection: string) => void
+}
+
+function TaskContextMenu({ children, collections, currentCollection, onMove }: TaskContextMenuProps) {
+  const targets = collections.filter((c) => c.name !== currentCollection && c.name !== 'inbox')
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger style={{ display: 'block' }}>{children}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>Move to</ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            {targets.length === 0 ? (
+              <div style={{ padding: '6px 8px', fontSize: 16, color: 'var(--muted-foreground)' }}>No other lists</div>
+            ) : (
+              targets.map((c) => (
+                <ContextMenuItem key={c.name} onSelect={() => onMove(c.name)}>
+                  {c.display_name}
+                </ContextMenuItem>
+              ))
+            )}
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 
@@ -259,7 +304,7 @@ function SectionHeader({
               else if (e.key === 'Escape') onEditCancel()
             }}
             onBlur={() => { if (editValue.trim()) onEditCommit(); else onEditCancel() }}
-            style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--foreground)', background: 'transparent', border: 'none', borderBottom: '1px solid var(--accent)', outline: 'none', padding: '0 0 2px', fontFamily: 'inherit' }}
+            style={{ flex: 1, fontSize: 16, fontWeight: 600, color: 'var(--foreground)', background: 'transparent', border: 'none', borderBottom: '1px solid var(--accent)', outline: 'none', padding: '0 0 2px', fontFamily: 'inherit' }}
           />
           <button
             onClick={onEditCommit}
@@ -277,13 +322,13 @@ function SectionHeader({
       ) : (
         <>
           <span
-            style={{ fontSize: 12, fontWeight: 600, color: 'var(--foreground)', cursor: 'text', flex: 1, lineHeight: '18px' }}
+            style={{ fontSize: 16, fontWeight: 600, color: 'var(--foreground)', cursor: 'text', flex: 1, lineHeight: '18px' }}
             onClick={onStartEdit}
           >
             {section.name}
           </span>
           {taskCount > 0 && (
-            <span style={{ fontSize: 11, color: 'var(--muted-foreground)', marginLeft: 4 }}>
+            <span style={{ fontSize: 14, color: 'var(--muted-foreground)', marginLeft: 4 }}>
               {taskCount}
             </span>
           )}
@@ -310,6 +355,11 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
     queryKey: ['todos', collection],
     queryFn: () => caldav.listTodos(collection),
     enabled: !!collection,
+  })
+
+  const { data: collections = [] } = useQuery<Collection[]>({
+    queryKey: ['collections'],
+    queryFn: () => caldav.listCollections(),
   })
 
   const { data: sections = [] } = useQuery<Section[]>({
@@ -401,8 +451,6 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
 
   // ── Mutations ─────────────────────────────────────────────────────────────
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
-
   const toggle = useMutation({
     mutationFn: (todo: Todo) =>
       caldav.updateTodo(collection, { ...todo, status: todo.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED' }),
@@ -421,6 +469,16 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
     mutationFn: ({ todo, newSummary }: { todo: Todo; newSummary: string }) =>
       caldav.updateTodo(collection, { ...todo, summary: newSummary }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['todos', collection] }),
+    onError: (e) => toast.error(String(e)),
+  })
+
+  const moveTodo = useMutation({
+    mutationFn: ({ todo, to }: { todo: Todo; to: string }) => caldav.moveTodo(collection, to, todo),
+    onSuccess: (_, { to }) => {
+      void qc.invalidateQueries({ queryKey: ['todos', collection] })
+      void qc.invalidateQueries({ queryKey: ['todos', to] })
+      toast.success('Task moved')
+    },
     onError: (e) => toast.error(String(e)),
   })
 
@@ -494,8 +552,18 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
 
   const handleDragEnd = useCallback(({ active: dragActive, over }: DragEndEvent) => {
     setActiveDragId(null)
-    if (!over || dragActive.id === over.id) return
+    if (!over) return
     if (dragActive.data.current?.type !== 'task') return
+
+    if (over.data.current?.type === 'collection') {
+      const targetCollection = over.data.current.name as string
+      if (targetCollection === collection) return
+      const curActive = optimisticActive ?? computedActive
+      const draggedTodo = curActive.find((t) => t.uid === String(dragActive.id))
+      if (draggedTodo) moveTodo.mutate({ todo: draggedTodo, to: targetCollection })
+      return
+    }
+    if (dragActive.id === over.id) return
 
     const sourceContainerId = dragActive.data.current.containerId as string
     const overData = over.data.current
@@ -584,7 +652,7 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
         }
       })
     }
-  }, [optimisticActive, computedActive, sections, getTaskBucket, dragUpdate])
+  }, [optimisticActive, computedActive, sections, getTaskBucket, dragUpdate, collection, moveTodo])
 
   // ── Inline-add handlers ───────────────────────────────────────────────────
 
@@ -668,7 +736,9 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
         if (!e.currentTarget.contains(e.relatedTarget)) setPanelOpenUid(null)
       }}
     >
-      <SortableTodoRow {...rowProps(todo)} containerId={containerId} />
+      <TaskContextMenu collections={collections} currentCollection={collection} onMove={(to) => moveTodo.mutate({ todo, to })}>
+        <SortableTodoRow {...rowProps(todo)} containerId={containerId} />
+      </TaskContextMenu>
       {panelOpenUid === todo.uid && (
         <TodoEditPanel
           todo={todo}
@@ -682,9 +752,11 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
+  useDndMonitor({ onDragStart: handleDragStart, onDragEnd: handleDragEnd })
+
   if (isLoading) {
     return (
-      <div style={{ padding: '32px', textAlign: 'center', color: 'var(--ui-text-muted)', fontSize: 13 }}>
+      <div style={{ padding: '32px', textAlign: 'center', color: 'var(--ui-text-muted)', fontSize: 17 }}>
         Loading…
       </div>
     )
@@ -693,13 +765,13 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 0' }}>
-        <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <>
 
           {/* Ungrouped tasks (no section, or section deleted) */}
           {ungroupedTasks.length === 0 && sections.length === 0 && !showInlineNew && (
             <div style={{ padding: '32px', textAlign: 'center' }}>
               <CheckCircle2 style={{ width: 24, height: 24, color: 'var(--border)', margin: '0 auto 8px' }} />
-              <p style={{ fontSize: 13, color: 'var(--ui-text-muted)', margin: 0 }}>All caught up.</p>
+              <p style={{ fontSize: 17, color: 'var(--ui-text-muted)', margin: 0 }}>All caught up.</p>
             </div>
           )}
           <SectionBucket
@@ -762,7 +834,7 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
             })() : null}
           </DragOverlay>
 
-        </DndContext>
+        </>
 
         {/* Add section */}
         <div style={{ padding: '4px 10px 2px' }}>
@@ -791,13 +863,13 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
                   setShowNewSection(false)
                 }}
                 placeholder="Section name…"
-                style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--foreground)', background: 'transparent', border: 'none', borderBottom: '1px solid var(--accent)', outline: 'none', padding: '0 0 2px', fontFamily: 'inherit' }}
+                style={{ flex: 1, fontSize: 16, fontWeight: 600, color: 'var(--foreground)', background: 'transparent', border: 'none', borderBottom: '1px solid var(--accent)', outline: 'none', padding: '0 0 2px', fontFamily: 'inherit' }}
               />
             </div>
           ) : (
             <button
               onClick={() => { setShowNewSection(true); setNewSectionName('') }}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0', color: 'var(--muted-foreground)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, opacity: 0.5, transition: 'opacity 150ms' }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0', color: 'var(--muted-foreground)', fontSize: 16, display: 'flex', alignItems: 'center', gap: 4, opacity: 0.5, transition: 'opacity 150ms' }}
               onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
               onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.5')}
             >
@@ -816,7 +888,7 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
         <div style={{ marginTop: 8 }}>
           <button
             onClick={() => setShowCompleted(v => !v)}
-            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', fontSize: 12, fontWeight: 500, transition: 'background 100ms' }}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', fontSize: 16, fontWeight: 500, transition: 'background 100ms' }}
             onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--hover-bg)')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           >
@@ -837,7 +909,9 @@ export function TaskList({ collection, accentColor }: TaskListProps) {
                     if (!e.currentTarget.contains(e.relatedTarget)) setPanelOpenUid(null)
                   }}
                 >
-                  <TodoRow {...rowProps(t)} />
+                  <TaskContextMenu collections={collections} currentCollection={collection} onMove={(to) => moveTodo.mutate({ todo: t, to })}>
+                    <TodoRow {...rowProps(t)} />
+                  </TaskContextMenu>
                   {panelOpenUid === t.uid && (
                     <TodoEditPanel
                       todo={t}

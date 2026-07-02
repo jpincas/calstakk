@@ -32,7 +32,7 @@ const inputStyle: React.CSSProperties = {
   border: '1px solid var(--border)',
   background: 'var(--background)',
   color: 'var(--foreground)',
-  fontSize: 12,
+  fontSize: 16,
   fontFamily: 'inherit',
   outline: 'none',
   boxSizing: 'border-box',
@@ -40,7 +40,7 @@ const inputStyle: React.CSSProperties = {
 
 const labelStyle: React.CSSProperties = {
   display: 'block',
-  fontSize: 10,
+  fontSize: 13,
   fontWeight: 600,
   letterSpacing: '0.06em',
   textTransform: 'uppercase',
@@ -140,7 +140,7 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
               style={{
                 padding: '3px 10px',
                 borderRadius: 20,
-                fontSize: 11,
+                fontSize: 14,
                 fontWeight: 500,
                 cursor: 'pointer',
                 transition: 'all 80ms',
@@ -194,14 +194,14 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
                 display: 'inline-flex', alignItems: 'center', gap: 3,
                 padding: '1px 7px', borderRadius: 20,
                 background: `${accentColor}22`, color: accentColor,
-                fontSize: 11, fontWeight: 500,
+                fontSize: 14, fontWeight: 500,
               }}
             >
               {cat}
               <button
                 type="button"
                 onClick={() => setCategories(categories.filter((c) => c !== cat))}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'inherit', lineHeight: 1, fontSize: 13 }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'inherit', lineHeight: 1, fontSize: 17 }}
               >
                 ×
               </button>
@@ -218,7 +218,7 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
             placeholder={categories.length === 0 ? 'Add tags…' : ''}
             style={{
               border: 'none', outline: 'none', background: 'transparent',
-              fontSize: 12, color: 'var(--foreground)', fontFamily: 'inherit',
+              fontSize: 16, color: 'var(--foreground)', fontFamily: 'inherit',
               minWidth: 80, flex: 1,
             }}
           />
@@ -229,19 +229,19 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 2 }}>
         {confirmDelete ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: 'var(--destructive)', fontWeight: 500 }}>Delete?</span>
+            <span style={{ fontSize: 16, color: 'var(--destructive)', fontWeight: 500 }}>Delete?</span>
             <button
               type="button"
               onClick={() => del.mutate()}
               disabled={del.isPending}
-              style={{ padding: '3px 10px', borderRadius: 6, border: 'none', background: 'var(--destructive)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+              style={{ padding: '3px 10px', borderRadius: 6, border: 'none', background: 'var(--destructive)', color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
             >
               Confirm
             </button>
             <button
               type="button"
               onClick={() => setConfirmDelete(false)}
-              style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', fontSize: 11, cursor: 'pointer', color: 'var(--foreground)' }}
+              style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', fontSize: 14, cursor: 'pointer', color: 'var(--foreground)' }}
             >
               No
             </button>
@@ -261,7 +261,7 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
           <button
             type="button"
             onClick={onClose}
-            style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', fontSize: 12, cursor: 'pointer', color: 'var(--foreground)' }}
+            style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', fontSize: 16, cursor: 'pointer', color: 'var(--foreground)' }}
           >
             Cancel
           </button>
@@ -269,7 +269,7 @@ export function TodoEditPanel({ todo, collection, accentColor, onClose }: Props)
             type="button"
             onClick={() => save.mutate()}
             disabled={save.isPending}
-            style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: accentColor, color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer', opacity: save.isPending ? 0.7 : 1 }}
+            style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: accentColor, color: '#fff', fontSize: 16, fontWeight: 600, cursor: 'pointer', opacity: save.isPending ? 0.7 : 1 }}
           >
             Save
           </button>

@@ -2,10 +2,19 @@ import { useState } from 'react'
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams } from 'react-router-dom'
 import { Calendar as BigCalendar, dateFnsLocalizer, type View } from 'react-big-calendar'
+import RBCDragAndDropAddon, { type EventInteractionArgs } from 'react-big-calendar/lib/addons/dragAndDrop'
+
+// Vite's CJS interop double-wraps this package's default export in dev; unwrap defensively.
+const withDragAndDrop = (
+  typeof RBCDragAndDropAddon === 'function'
+    ? RBCDragAndDropAddon
+    : (RBCDragAndDropAddon as unknown as { default: typeof RBCDragAndDropAddon }).default
+)
 import { format, parse, startOfWeek, getDay, startOfMonth, endOfMonth, addMonths, subMonths } from 'date-fns'
 import { enUS } from 'date-fns/locale'
 import { RRule } from 'rrule'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
+import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
 import { caldav } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -13,7 +22,7 @@ import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { toast } from 'sonner'
 import { collectionColor } from '@/lib/colors'
-import { parseCalDate } from '@/lib/dates'
+import { parseCalDate, fmtTime } from '@/lib/dates'
 import { ChevronLeft, ChevronRight, Plus, CalendarDays } from 'lucide-react'
 import { PageBar } from '@/components/layout/PageBar'
 import { useCollectionStore } from '@/state/collection'
@@ -38,6 +47,8 @@ type RBCEvent = {
   allDay: boolean
   resource: CalEvent & { _colName: string }
 }
+
+const DnDCalendar = withDragAndDrop<RBCEvent, object>(BigCalendar)
 
 function expandRecurring(e: CalEvent, colName: string, rangeStart: Date, rangeEnd: Date): RBCEvent[] {
   if (!e.rrule) return []
@@ -176,6 +187,31 @@ export function CalendarPage() {
     onError: (e) => toast.error(String(e)),
   })
 
+  const reschedule = useMutation({
+    mutationFn: ({ ev, start, end }: { ev: CalEvent & { _colName: string }; start: Date; end: Date }) =>
+      caldav.updateEvent(ev._colName, {
+        uid: ev.uid,
+        summary: ev.summary,
+        start: start.toISOString(),
+        end: end.toISOString(),
+        description: ev.description,
+        location: ev.location,
+      }),
+    onSuccess: (_, { ev }) => {
+      void qc.invalidateQueries({ queryKey: ['events', ev._colName] })
+      toast.success('Event rescheduled')
+    },
+    onError: (e) => toast.error(String(e)),
+  })
+
+  const handleEventDrop = ({ event, start, end }: EventInteractionArgs<RBCEvent>) => {
+    reschedule.mutate({ ev: event.resource, start: new Date(start), end: new Date(end) })
+  }
+
+  const handleEventResize = ({ event, start, end }: EventInteractionArgs<RBCEvent>) => {
+    reschedule.mutate({ ev: event.resource, start: new Date(start), end: new Date(end) })
+  }
+
   const viewLabel =
     view === 'month'
       ? format(date, 'MMMM yyyy')
@@ -192,7 +228,7 @@ export function CalendarPage() {
 
   const navBtnStyle: React.CSSProperties = {
     padding: '4px 8px',
-    fontSize: 12,
+    fontSize: 16,
     fontWeight: 500,
     background: 'transparent',
     color: 'var(--muted-foreground)',
@@ -205,7 +241,7 @@ export function CalendarPage() {
 
   const viewBtnStyle = (active: boolean): React.CSSProperties => ({
     padding: '4px 10px',
-    fontSize: 12,
+    fontSize: 16,
     fontWeight: 500,
     background: active ? accentColor.bg : 'transparent',
     color: active ? '#fff' : 'var(--muted-foreground)',
@@ -254,7 +290,7 @@ export function CalendarPage() {
                 display: 'flex', alignItems: 'center', gap: 5,
                 padding: '5px 10px', borderRadius: 7, border: 'none',
                 background: accentColor.bg, color: '#fff',
-                fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                fontSize: 16, fontWeight: 600, cursor: 'pointer',
               }}
             >
               <Plus style={{ width: 13, height: 13 }} />
@@ -265,13 +301,13 @@ export function CalendarPage() {
       />
 
       {/* Calendar */}
-      <div style={{ flex: 1, padding: 16, overflow: 'hidden' }}>
+      <div style={{ flex: 1, padding: 0, overflow: 'hidden' }}>
         {isLoading ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--ui-text-muted)', fontSize: 13 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--ui-text-muted)', fontSize: 17 }}>
             Loading…
           </div>
         ) : (
-          <BigCalendar
+          <DnDCalendar
             localizer={localizer}
             events={bigCalEvents}
             view={view}
@@ -279,18 +315,49 @@ export function CalendarPage() {
             date={date}
             onNavigate={setDate}
             toolbar={false}
+            resizable
+            draggableAccessor={(event) => !event.resource?.rrule}
+            resizableAccessor={(event) => !event.resource?.rrule}
+            onEventDrop={handleEventDrop}
+            onEventResize={handleEventResize}
             eventPropGetter={(event) => {
               const colName = (event).resource?._colName
               const c = colName ? collectionColor(names, colName) : accentColor
-              return {
-                style: {
-                  backgroundColor: c.bg,
-                  borderColor: 'transparent',
-                  borderRadius: 4,
-                  fontSize: 12,
-                  fontWeight: 500,
-                },
-              }
+              return event.allDay
+                ? {
+                    style: {
+                      backgroundColor: c.bg,
+                      color: '#fff',
+                      borderColor: 'transparent',
+                      borderRadius: 4,
+                      fontSize: 16,
+                      fontWeight: 500,
+                    },
+                  }
+                : {
+                    style: {
+                      backgroundColor: 'transparent',
+                      color: 'var(--foreground)',
+                      borderColor: 'transparent',
+                      borderRadius: 4,
+                      fontSize: 16,
+                      fontWeight: 500,
+                    },
+                  }
+            }}
+            components={{
+              event: ({ event }: { event: RBCEvent }) => {
+                if (event.allDay) return <>{event.title}</>
+                const colName = event.resource?._colName
+                const c = colName ? collectionColor(names, colName) : accentColor
+                return (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden' }}>
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: c.bg, flexShrink: 0 }} />
+                    <span style={{ opacity: 0.75, flexShrink: 0 }}>{fmtTime(event.start)}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{event.title}</span>
+                  </span>
+                )
+              },
             }}
             onSelectEvent={(e) => {
               const ev = (e).resource

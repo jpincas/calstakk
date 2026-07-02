@@ -296,7 +296,7 @@ export function ProjectPage() {
   if (!colName) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-        <p style={{ fontSize: 13, color: 'var(--ui-text-muted)' }}>Select a project from the sidebar.</p>
+        <p style={{ fontSize: 17, color: 'var(--ui-text-muted)' }}>Select a project from the sidebar.</p>
       </div>
     )
   }
@@ -326,7 +326,7 @@ export function ProjectPage() {
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {eventBuckets.length === 0 ? (
           <div style={{ padding: '32px 16px', textAlign: 'center' }}>
-            <p style={{ fontSize: 13, color: 'var(--ui-text-muted)', margin: 0 }}>No upcoming events.</p>
+            <p style={{ fontSize: 17, color: 'var(--ui-text-muted)', margin: 0 }}>No upcoming events.</p>
           </div>
         ) : (
           eventBuckets.map(({ label, events: bucketEvents }) => (
@@ -335,7 +335,7 @@ export function ProjectPage() {
               <div
                 style={{
                   padding: '12px 16px 4px',
-                  fontSize: 10,
+                  fontSize: 13,
                   fontWeight: 700,
                   letterSpacing: '0.08em',
                   textTransform: 'uppercase',
@@ -380,10 +380,10 @@ export function ProjectPage() {
                         flexShrink: 0,
                       }}
                     >
-                      <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--foreground)', lineHeight: 1 }}>
+                      <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--foreground)', lineHeight: 1 }}>
                         {dayNum}
                       </span>
-                      <span style={{ fontSize: 8, fontWeight: 600, color: 'var(--muted-foreground)', letterSpacing: '0.04em', lineHeight: 1, marginTop: 2 }}>
+                      <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted-foreground)', letterSpacing: '0.04em', lineHeight: 1, marginTop: 2 }}>
                         {monthStr}
                       </span>
                     </div>
@@ -391,7 +391,7 @@ export function ProjectPage() {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p
                         style={{
-                          fontSize: 13,
+                          fontSize: 17,
                           fontWeight: 600,
                           color: 'var(--foreground)',
                           margin: 0,
@@ -403,14 +403,14 @@ export function ProjectPage() {
                         {event.summary}
                       </p>
                       {timeStr && (
-                        <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '2px 0 0' }}>
+                        <p style={{ fontSize: 14, color: 'var(--muted-foreground)', margin: '2px 0 0' }}>
                           {timeStr}
                         </p>
                       )}
                       {event.location && (
                         <p
                           style={{
-                            fontSize: 11,
+                            fontSize: 14,
                             color: 'var(--muted-foreground)',
                             margin: '2px 0 0',
                             overflow: 'hidden',
@@ -458,7 +458,7 @@ export function ProjectPage() {
                 if (e.key === 'Escape') setEditingName(false)
               }}
               style={{
-                fontSize: 15,
+                fontSize: 20,
                 fontWeight: 700,
                 color: '#fff',
                 background: 'rgba(255,255,255,0.15)',
@@ -485,13 +485,13 @@ export function ProjectPage() {
               onClick={openSettings}
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                width: 28, height: 28, borderRadius: 6,
+                width: 36, height: 36, borderRadius: 7,
                 border: '1px solid rgba(255,255,255,0.35)',
                 background: 'transparent', color: 'rgba(255,255,255,0.85)',
                 cursor: 'pointer',
               }}
             >
-              <Settings style={{ width: 14, height: 14 }} />
+              <Settings style={{ width: 18, height: 18 }} />
             </button>
             <button
               onClick={() => setEventForm(emptyEventForm())}
@@ -500,7 +500,7 @@ export function ProjectPage() {
                 padding: '5px 10px', borderRadius: 7,
                 border: '1px solid rgba(255,255,255,0.35)',
                 background: 'rgba(255,255,255,0.15)', color: '#fff',
-                fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                fontSize: 16, fontWeight: 600, cursor: 'pointer',
               }}
             >
               <Plus style={{ width: 13, height: 13 }} />
@@ -513,7 +513,7 @@ export function ProjectPage() {
                 padding: '5px 10px', borderRadius: 7,
                 border: '1px solid rgba(255,255,255,0.35)',
                 background: 'rgba(255,255,255,0.15)', color: '#fff',
-                fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                fontSize: 16, fontWeight: 600, cursor: 'pointer',
               }}
             >
               <Plus style={{ width: 13, height: 13 }} />
@@ -544,7 +544,7 @@ export function ProjectPage() {
                 borderBottom: activeTab === tab ? `2px solid ${color.bg}` : '2px solid transparent',
                 background: 'transparent',
                 color: activeTab === tab ? 'var(--foreground)' : 'var(--muted-foreground)',
-                fontSize: 13,
+                fontSize: 17,
                 fontWeight: activeTab === tab ? 600 : 400,
                 cursor: 'pointer',
                 transition: 'color 100ms',
@@ -657,7 +657,7 @@ export function ProjectPage() {
             <div>
               <p
                 style={{
-                  fontSize: 11,
+                  fontSize: 14,
                   fontWeight: 700,
                   letterSpacing: '0.06em',
                   textTransform: 'uppercase',
@@ -718,7 +718,7 @@ export function ProjectPage() {
                 })}
               </div>
               {!settingColor && (
-                <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '8px 0 0' }}>
+                <p style={{ fontSize: 14, color: 'var(--muted-foreground)', margin: '8px 0 0' }}>
                   Using palette colour. Select a swatch to override.
                 </p>
               )}
@@ -728,7 +728,7 @@ export function ProjectPage() {
             <div>
               <p
                 style={{
-                  fontSize: 11,
+                  fontSize: 14,
                   fontWeight: 700,
                   letterSpacing: '0.06em',
                   textTransform: 'uppercase',
@@ -752,7 +752,7 @@ export function ProjectPage() {
                           border: '1px solid var(--border)',
                           background: selected ? color.bg : 'var(--accent)',
                           color: selected ? '#fff' : 'var(--foreground)',
-                          fontSize: 12,
+                          fontSize: 16,
                           fontWeight: selected ? 600 : 400,
                           cursor: 'pointer',
                           transition: 'background 100ms, color 100ms',

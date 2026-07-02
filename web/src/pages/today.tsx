@@ -180,7 +180,7 @@ export function TodayPage() {
         {todayTodos.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8, paddingTop: 48 }}>
             <CheckCircle2 style={{ width: 20, height: 20, color: 'var(--ui-text-muted)' }} />
-            <p style={{ fontSize: 12, color: 'var(--ui-text-muted)', margin: 0 }}>All caught up.</p>
+            <p style={{ fontSize: 16, color: 'var(--ui-text-muted)', margin: 0 }}>All caught up.</p>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -209,11 +209,11 @@ export function TodayPage() {
                   </button>
 
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontSize: 13, fontWeight: 400, color: 'var(--foreground)', margin: 0 }}>
+                    <p style={{ fontSize: 17, fontWeight: 400, color: 'var(--foreground)', margin: 0 }}>
                       {todo.summary}
                     </p>
                     {todo.description && (
-                      <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <p style={{ fontSize: 14, color: 'var(--muted-foreground)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {todo.description}
                       </p>
                     )}
@@ -221,7 +221,7 @@ export function TodayPage() {
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                     {overdue && due && (
-                      <span style={{ fontSize: 11, color: 'var(--destructive)', fontWeight: 500 }}>
+                      <span style={{ fontSize: 14, color: 'var(--destructive)', fontWeight: 500 }}>
                         {fmtDateShort(due)}
                       </span>
                     )}
@@ -241,7 +241,7 @@ export function TodayPage() {
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 12px 16px' }}>
         {todayEvents.length === 0 ? (
-          <p style={{ fontSize: 12, color: 'var(--ui-text-muted)', padding: '8px 10px' }}>No events today.</p>
+          <p style={{ fontSize: 16, color: 'var(--ui-text-muted)', padding: '8px 10px' }}>No events today.</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             {todayEvents.map((event) => {
@@ -279,20 +279,20 @@ export function TodayPage() {
                   }}>
                     {hourLabel ? (
                       <>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: textColor, lineHeight: 1 }}>{hourLabel}</span>
-                        <span style={{ fontSize: 8, fontWeight: 600, color: textColor, opacity: 0.7, letterSpacing: '0.04em', lineHeight: 1, marginTop: 2 }}>{ampm}</span>
+                        <span style={{ fontSize: 18, fontWeight: 700, color: textColor, lineHeight: 1 }}>{hourLabel}</span>
+                        <span style={{ fontSize: 10, fontWeight: 600, color: textColor, opacity: 0.7, letterSpacing: '0.04em', lineHeight: 1, marginTop: 2 }}>{ampm}</span>
                       </>
                     ) : (
-                      <span style={{ fontSize: 8, fontWeight: 600, color: textColor, opacity: 0.7, letterSpacing: '0.04em', textTransform: 'uppercase' }}>all day</span>
+                      <span style={{ fontSize: 10, fontWeight: 600, color: textColor, opacity: 0.7, letterSpacing: '0.04em', textTransform: 'uppercase' }}>all day</span>
                     )}
                   </div>
                   {/* Content */}
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontSize: 13, fontWeight: 500, color: 'var(--foreground)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <p style={{ fontSize: 17, fontWeight: 500, color: 'var(--foreground)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {event.summary}
                     </p>
                     {timeStr && (
-                      <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <p style={{ fontSize: 14, color: 'var(--muted-foreground)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {timeStr}
                       </p>
                     )}
@@ -319,7 +319,7 @@ export function TodayPage() {
         detail={todayLabel}
         controls={
           todayTodos.length > 0 ? (
-            <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
+            <span style={{ fontSize: 16, color: 'var(--muted-foreground)' }}>
               {todayTodos.length} task{todayTodos.length !== 1 ? 's' : ''}
             </span>
           ) : undefined
@@ -343,7 +343,7 @@ export function TodayPage() {
               style={{
                 flex: 1,
                 padding: '9px 0',
-                fontSize: 12,
+                fontSize: 16,
                 fontWeight: 500,
                 border: 'none',
                 background: 'transparent',
@@ -378,7 +378,7 @@ function CollectionBadge({ color, label }: { color: string; label: string }) {
   return (
     <span
       style={{
-        fontSize: 10,
+        fontSize: 13,
         fontWeight: 500,
         padding: '2px 7px',
         borderRadius: 20,

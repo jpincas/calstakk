@@ -77,7 +77,7 @@
     --radius: 0.5rem;
 
     --sidebar: #f4f4f5;
-    --sidebar-foreground: #3f3f46;
+    --sidebar-foreground: #18181b;
     --sidebar-primary: #09090b;
     --sidebar-primary-foreground: #FFFFFF;
     --sidebar-accent: #FFFFFF;
@@ -127,7 +127,7 @@
     --ring: rgba(255, 255, 255, 0.2);
 
     --sidebar: #141417;
-    --sidebar-foreground: #8A8A96;
+    --sidebar-foreground: rgba(255, 255, 255, 0.78);
     --sidebar-primary: rgba(255, 255, 255, 0.88);
     --sidebar-primary-foreground: #141417;
     --sidebar-accent: #1C1C21;
@@ -218,7 +218,7 @@
 /* ─── React Big Calendar ──────────────────────────────────── */
 .rbc-calendar {
   font-family: 'Geist Variable', sans-serif;
-  font-size: 13px;
+  font-size: 17px;
   color: var(--foreground);
   background: transparent;
 }
@@ -228,14 +228,14 @@
 .rbc-month-view,
 .rbc-time-view,
 .rbc-agenda-view {
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: none;
+  border-radius: 0;
   overflow: hidden;
   background: var(--card);
 }
 .rbc-header {
   padding: 10px 4px;
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -250,7 +250,7 @@
 .rbc-today { background: rgba(99, 102, 241, 0.07); }
 .rbc-date-cell {
   padding: 6px 8px;
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 500;
   color: var(--rbc-date-text);
   text-align: right;
@@ -270,15 +270,14 @@
 .rbc-event {
   border-radius: 4px;
   padding: 2px 6px;
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 500;
   border: none !important;
-  color: white !important;
 }
 .rbc-event:focus { outline: none; }
-.rbc-event-label { font-size: 11px; opacity: 0.8; }
+.rbc-event-label { display: none; }
 .rbc-show-more {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--cal-accent, #6366F1);
   font-weight: 600;
   padding: 2px 8px;
@@ -292,7 +291,7 @@
   border-top: none;
   background: var(--card);
 }
-.rbc-time-slot { font-size: 11px; color: var(--ui-text-muted); }
+.rbc-time-slot { font-size: 14px; color: var(--ui-text-muted); }
 .rbc-timeslot-group { border-bottom: 1px solid var(--rbc-grid-border); }
 .rbc-current-time-indicator { background: #6366F1; height: 2px; }
 .rbc-allday-cell { border-bottom: 1px solid var(--border); }

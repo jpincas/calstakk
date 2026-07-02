@@ -4,7 +4,7 @@ import { caldav } from '@/api'
 import { collectionColor } from '@/lib/colors'
 import { parseCalDate, fmtDateShort } from '@/lib/dates'
 import { isBefore, startOfDay, isToday } from 'date-fns'
-import { Circle, ListTodo } from 'lucide-react'
+import { Circle, ListTodo, Sun } from 'lucide-react'
 import type { Collection, Todo } from '@/types'
 import { PageBar } from '@/components/layout/PageBar'
 
@@ -76,7 +76,7 @@ export function TasksPage() {
         </div>
 
         {projects.length === 0 && (
-          <p style={{ fontSize: 13, color: 'var(--ui-text-muted)', textAlign: 'center', paddingTop: 64 }}>
+          <p style={{ fontSize: 17, color: 'var(--ui-text-muted)', textAlign: 'center', paddingTop: 64 }}>
             No projects yet.
           </p>
         )}
@@ -122,13 +122,13 @@ function ProjectCard({ col, color, active, total, now, onNavigate }: CardProps) 
           gap: 8,
         }}
       >
-        <span style={{ fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 17, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {col.display_name}
         </span>
         {total > 0 && (
           <span
             style={{
-              fontSize: 11,
+              fontSize: 14,
               fontWeight: 500,
               color: '#fff',
               opacity: 0.75,
@@ -143,7 +143,7 @@ function ProjectCard({ col, color, active, total, now, onNavigate }: CardProps) 
       {/* Task list */}
       <div style={{ padding: '6px 0' }}>
         {active.length === 0 ? (
-          <p style={{ fontSize: 12, color: 'var(--ui-text-muted)', padding: '10px 14px', margin: 0 }}>
+          <p style={{ fontSize: 16, color: 'var(--ui-text-muted)', padding: '10px 14px', margin: 0 }}>
             Nothing to do!
           </p>
         ) : (
@@ -175,7 +175,7 @@ function ProjectCard({ col, color, active, total, now, onNavigate }: CardProps) 
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p
                     style={{
-                      fontSize: 13,
+                      fontSize: 17,
                       color: 'var(--foreground)',
                       margin: 0,
                       overflow: 'hidden',
@@ -187,20 +187,23 @@ function ProjectCard({ col, color, active, total, now, onNavigate }: CardProps) 
                   </p>
                 </div>
                 {due && (
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 500,
-                      flexShrink: 0,
-                      color: overdue
-                        ? 'var(--destructive)'
-                        : dueToday
-                        ? '#F59E0B'
-                        : 'var(--ui-text-muted)',
-                    }}
-                  >
-                    {fmtDateShort(due)}
-                  </span>
+                  dueToday ? (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 14, fontWeight: 500, flexShrink: 0, color: '#F59E0B' }}>
+                      <Sun style={{ width: 13, height: 13 }} />
+                      Today
+                    </span>
+                  ) : (
+                    <span
+                      style={{
+                        fontSize: 14,
+                        fontWeight: 500,
+                        flexShrink: 0,
+                        color: overdue ? 'var(--destructive)' : 'var(--ui-text-muted)',
+                      }}
+                    >
+                      {fmtDateShort(due)}
+                    </span>
+                  )
                 )}
               </div>
             )
