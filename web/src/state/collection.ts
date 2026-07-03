@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { ViewMode } from '@/types'
 
+/** How a collection's tasks are displayed: vertical list or kanban board. */
+export type TaskViewMode = 'list' | 'board'
+
 interface CollectionState {
   activeCollection: string | null
   viewMode: ViewMode
@@ -9,12 +12,15 @@ interface CollectionState {
   focusedCollection: string | null
   theme: 'light' | 'dark'
   showTasksOnCalendar: boolean
+  /** Per-collection list/board preference, keyed by collection ref. Absent = 'list'. */
+  taskView: Record<string, TaskViewMode>
   setCollection: (name: string) => void
   setViewMode: (mode: ViewMode) => void
   toggleCollectionHidden: (name: string) => void
   setFocusedCollection: (name: string | null) => void
   toggleTheme: () => void
   toggleShowTasksOnCalendar: () => void
+  setTaskView: (ref: string, view: TaskViewMode) => void
 }
 
 export const useCollectionStore = create<CollectionState>()(
@@ -39,6 +45,8 @@ export const useCollectionStore = create<CollectionState>()(
         set((s) => ({ focusedCollection: s.focusedCollection === name ? null : name })),
       toggleTheme: () => set((s) => ({ theme: s.theme === 'light' ? 'dark' : 'light' })),
       toggleShowTasksOnCalendar: () => set((s) => ({ showTasksOnCalendar: !s.showTasksOnCalendar })),
+      taskView: {},
+      setTaskView: (ref, view) => set((s) => ({ taskView: { ...s.taskView, [ref]: view } })),
     }),
     { name: 'calstakk-collection' }
   )

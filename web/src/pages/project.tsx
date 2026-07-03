@@ -18,9 +18,9 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { Settings, Plus, Share2, Eye } from 'lucide-react'
+import { Settings, Plus, Share2, Eye, Columns3, LayoutList } from 'lucide-react'
 import { PageBar } from '@/components/layout/PageBar'
-import { TaskList } from '@/components/TaskList'
+import { TasksView } from '@/components/todos/TasksView'
 import { ShareDialog } from '@/components/ShareDialog'
 import { NewTaskDialog } from '@/components/NewTaskDialog'
 import {
@@ -84,7 +84,7 @@ export function ProjectPage() {
   const { collection: colName } = useParams<{ collection: string }>()
   const qc = useQueryClient()
   const navigate = useNavigate()
-  const { setCollection } = useCollectionStore()
+  const { setCollection, taskView, setTaskView } = useCollectionStore()
 
   // Sync active collection to store
   useEffect(() => {
@@ -129,6 +129,7 @@ export function ProjectPage() {
   }, [col, names, colName])
 
   const displayName = col?.display_name ?? colName ?? 'Project'
+  const view = (colName ? taskView[colName] : undefined) ?? 'list'
 
   // Counts for PageBar — TaskList owns the full render; todos query is shared cache
   const activeCount = useMemo(() => todos.filter(t => t.status !== 'COMPLETED' && t.status !== 'CANCELLED').length, [todos])
@@ -279,10 +280,15 @@ export function ProjectPage() {
 
   // ── Pane renderers ────────────────────────────────────────────────────────
 
+  // Board mode needs the full page width: force the tabbed (single-pane)
+  // layout so the board isn't squeezed into a half-width pane; events stay
+  // one tab away.
+  const tabbed = isNarrow || view === 'board'
+
   const TasksPane = (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <TaskList collection={colName} accentColor={color.bg} readOnly={readOnly} />
+      <div style={{ flex: 1, overflowY: view === 'board' ? 'hidden' : 'auto', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <TasksView collection={colName} accentColor={color.bg} readOnly={readOnly} view={view} />
       </div>
     </div>
   )
@@ -295,7 +301,7 @@ export function ProjectPage() {
         flexDirection: 'column',
         overflow: 'hidden',
         minWidth: 0,
-        borderLeft: isNarrow ? 'none' : '1px solid var(--border)',
+        borderLeft: tabbed ? 'none' : '1px solid var(--border)',
       }}
     >
       {/* Event list */}
@@ -470,6 +476,24 @@ export function ProjectPage() {
         }
         controls={
           <>
+            <button
+              onClick={() => {
+                setTaskView(colName, view === 'list' ? 'board' : 'list')
+                setActiveTab('Tasks') // the board lives on the Tasks tab — surface it immediately
+              }}
+              title={view === 'list' ? 'Board view' : 'List view'}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 36, height: 36, borderRadius: 7,
+                border: '1px solid rgba(255,255,255,0.35)',
+                background: 'transparent', color: 'rgba(255,255,255,0.85)',
+                cursor: 'pointer',
+              }}
+            >
+              {view === 'list'
+                ? <Columns3 style={{ width: 18, height: 18 }} />
+                : <LayoutList style={{ width: 18, height: 18 }} />}
+            </button>
             {isOwner && col && (
               <button
                 onClick={() => setShareOpen(true)}
@@ -535,8 +559,8 @@ export function ProjectPage() {
         }
       />
 
-      {/* Narrow mode tab bar */}
-      {isNarrow && (
+      {/* Tab bar: narrow layouts and board mode (board takes the full width) */}
+      {tabbed && (
         <div
           style={{
             display: 'flex',
@@ -578,7 +602,7 @@ export function ProjectPage() {
           minHeight: 0,
         }}
       >
-        {isNarrow ? (
+        {tabbed ? (
           activeTab === 'Tasks' ? TasksPane : EventsPane
         ) : (
           <>
