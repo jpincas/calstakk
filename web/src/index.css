@@ -215,6 +215,16 @@
   color: var(--sidebar-primary);
 }
 
+/* ─── Task completion grace period ────────────────────────── */
+/* Duration mirrors COMPLETION_GRACE_MS (usePendingCompletion). */
+@keyframes task-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0.15; }
+}
+.task-fading-out {
+  animation: task-fade-out 5s linear forwards;
+}
+
 /* ─── React Big Calendar ──────────────────────────────────── */
 .rbc-calendar {
   font-family: 'Geist Variable', sans-serif;

@@ -1,15 +1,19 @@
-import { useState, useEffect, useRef } from 'react'
-import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { useQuery, useQueries } from '@tanstack/react-query'
 import { format, isToday, isBefore, startOfDay, addDays } from 'date-fns'
 import { useNavigate } from 'react-router-dom'
 import { caldav } from '@/api'
-import { withOptimism, patchList } from '@/lib/optimistic'
 import { collectionColor } from '@/lib/colors'
-import { calendarLinkFor, parseCalDate, fmtTime, fmtDateShort } from '@/lib/dates'
+import { calendarLinkFor, parseCalDate, fmtTime } from '@/lib/dates'
 import { expandEvent, type Occurrence } from '@/lib/recur'
-import { Circle, CheckCircle2, Sun } from 'lucide-react'
+import { CheckCircle2, Sun } from 'lucide-react'
 import { PageBar } from '@/components/layout/PageBar'
-import type { Collection, Todo } from '@/types'
+import { useGlobalTodos, useGlobalToggle, type GlobalTodo } from '@/components/todos/useGlobalTodos'
+import { usePendingCompletion } from '@/components/todos/usePendingCompletion'
+import { GlobalTodoRow } from '@/components/todos/GlobalTodoRow'
+import { TodayBulkBar } from '@/components/todos/TodayBulkBar'
+import { useTaskSelectionStore } from '@/state/selection'
+import type { Collection } from '@/types'
 
 // Colour stops: [hour, [r, g, b]]
 // Golden morning (7–9:30am) and golden evening (5:30–6:30pm) use bright amber that needs dark text.
@@ -63,10 +67,12 @@ function timeOfDayColors(date: Date | null): { bg: string; text: string } {
 }
 
 type EventMeta = { occ: Occurrence; _colName: string; _colDisplayName: string; _colColor: string }
-type TodoMeta  = Todo & { _colName: string; _colDisplayName: string; _colColor: string }
+
+/** Selection scope key for the Today view (real collections use their ref). */
+const SEL_SCOPE = '__today__'
+const selKey = (t: GlobalTodo) => `${t._colRef}/${t.uid}`
 
 export function TodayPage() {
-  const qc  = useQueryClient()
   const navigate = useNavigate()
   const now = new Date()
   const todayLabel = format(now, 'EEEE d MMMM')
@@ -94,8 +100,6 @@ export function TodayPage() {
 
   const names          = collections.map((c) => c.ref)
   const calCollections = collections.filter((c) => c.ref !== 'capture')
-  // Read-only shared collections: no mutation affordances (server would 403).
-  const readOnlyRefs   = new Set(collections.filter((c) => c.myAccess === 'read').map((c) => c.ref))
 
   const eventQueries = useQueries({
     queries: calCollections.map((c) => ({
@@ -104,12 +108,9 @@ export function TodayPage() {
     })),
   })
 
-  const todoQueries = useQueries({
-    queries: collections.map((c) => ({
-      queryKey: ['todos', c.ref],
-      queryFn: () => caldav.listTodos(c.ref),
-    })),
-  })
+  const { all: allTodos, waiting } = useGlobalTodos()
+  const globalToggle = useGlobalToggle()
+  const pendingCompletion = usePendingCompletion()
 
   // ── Derived data ─────────────────────────────────────────────────────────────
   // Recurring events are expanded over today's window; an event appears once
@@ -132,24 +133,15 @@ export function TodayPage() {
     })
     .sort((a, b) => a.occ.start.getTime() - b.occ.start.getTime())
 
-  const todayTodos: TodoMeta[] = collections
-    .flatMap((col, i) => {
-      const color = collectionColor(names, col.ref)
-      const data  = (todoQueries[i]?.data ?? [])
-      return data
-        .filter((t) => {
-          if (t.status === 'COMPLETED' || t.status === 'CANCELLED') return false
-          if (!t.due) return false
-          const due = parseCalDate(t.due)
-          if (!due) return false
-          return isToday(due) || isBefore(due, startOfDay(now))
-        })
-        .map((t) => ({
-          ...t,
-          _colName:        col.ref,
-          _colDisplayName: col.display_name,
-          _colColor:       col.color ?? color.bg,
-        }))
+  // Due today or overdue. Just-completed tasks stay for their fade-out grace period.
+  const todayTodos: GlobalTodo[] = allTodos
+    .filter((t) => {
+      const isActive = t.status !== 'COMPLETED' && t.status !== 'CANCELLED'
+      if (!isActive && !pendingCompletion.has(selKey(t))) return false
+      if (!t.due) return false
+      const due = parseCalDate(t.due)
+      if (!due) return false
+      return isToday(due) || isBefore(due, startOfDay(now))
     })
     .sort((a, b) => {
       if (!a.due && !b.due) return 0
@@ -158,30 +150,54 @@ export function TodayPage() {
       return a.due.localeCompare(b.due)
     })
 
-  // ── Mutations ────────────────────────────────────────────────────────────────
-  const toggle = useMutation({
-    mutationFn: ({ todo }: { todo: TodoMeta }) => {
-      const { _colName, ...cleanTodo } = todo
-      // _colName carries the collection ref; read-only refs never reach here
-      // (the checkbox is inert) but block anyway — the server would 403.
-      if (readOnlyRefs.has(_colName)) return Promise.resolve()
-      return caldav.updateTodo(_colName, {
-        ...cleanTodo,
-        status: cleanTodo.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED',
-      })
-    },
-    ...withOptimism<{ todo: TodoMeta }>(qc, {
-      patches: ({ todo }) =>
-        readOnlyRefs.has(todo._colName) ? [] : [
-          patchList<Todo>(['todos', todo._colName], (todos) =>
-            todos.map((t) =>
-              t.uid === todo.uid
-                ? { ...t, status: t.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED' }
-                : t
-            )),
-        ],
-    }),
-  })
+  const blockerOf = new Map(waiting.map(({ todo, blocker }) => [selKey(todo), blocker]))
+
+  // ── Selection (cross-collection, so keys are "ref/uid") ─────────────────────
+  const selCollection = useTaskSelectionStore((s) => s.collection)
+  const selUids = useTaskSelectionStore((s) => s.uids)
+  const selectOnly = useTaskSelectionStore((s) => s.selectOnly)
+  const toggleSel = useTaskSelectionStore((s) => s.toggle)
+  const rangeTo = useTaskSelectionStore((s) => s.rangeTo)
+  const clearSel = useTaskSelectionStore((s) => s.clear)
+
+  const selectedSet = useMemo(
+    () => new Set(selCollection === SEL_SCOPE ? selUids : []),
+    [selCollection, selUids],
+  )
+  // Read-only rows can't take any bulk action, so they're not selectable.
+  const selectableKeys = todayTodos.filter((t) => !t._colReadOnly).map(selKey)
+  const selectedTodos = todayTodos.filter((t) => selectedSet.has(selKey(t)))
+
+  const handleRowSelect = (todo: GlobalTodo, e: React.MouseEvent) => {
+    e.stopPropagation() // the pane's blank-area click clears the selection
+    if (todo._colReadOnly) return
+    const key = selKey(todo)
+    if (e.ctrlKey || e.metaKey) toggleSel(SEL_SCOPE, key)
+    else if (e.shiftKey) rangeTo(SEL_SCOPE, key, selectableKeys)
+    else selectOnly(SEL_SCOPE, key)
+  }
+
+  useEffect(() => {
+    if (selectedSet.size === 0) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) clearSel()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedSet.size, clearSel])
+
+  // The selection belongs to this view — navigating away drops it.
+  useEffect(() => () => {
+    const s = useTaskSelectionStore.getState()
+    if (s.collection === SEL_SCOPE) s.clear()
+  }, [])
+
+  // ── Toggle with completion grace ─────────────────────────────────────────────
+  const handleToggle = (todo: GlobalTodo) => {
+    globalToggle.mutate(todo)
+    if (todo.status !== 'COMPLETED') pendingCompletion.add(selKey(todo))
+    else pendingCompletion.remove(selKey(todo))
+  }
 
   // ── Tasks pane ───────────────────────────────────────────────────────────────
   const TasksPane = (
@@ -195,7 +211,10 @@ export function TodayPage() {
         borderRight: isNarrow ? 'none' : '1px solid var(--border)',
       }}
     >
-      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 12px 16px' }}>
+      <div
+        style={{ flex: 1, overflowY: 'auto', padding: '4px 12px 16px' }}
+        onClick={() => { if (selectedSet.size > 0) clearSel() }}
+      >
         {todayTodos.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8, paddingTop: 48 }}>
             <CheckCircle2 style={{ width: 20, height: 20, color: 'var(--ui-text-muted)' }} />
@@ -203,54 +222,18 @@ export function TodayPage() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {todayTodos.map((todo) => {
-              const due     = todo.due ? parseCalDate(todo.due) : null
-              const overdue = due ? isBefore(due, startOfDay(now)) && !isToday(due) : false
-              const ro      = readOnlyRefs.has(todo._colName)
-              return (
-                <div
-                  key={`${todo._colName}-${todo.uid}`}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: 10,
-                    padding: '9px 10px',
-                    borderRadius: 8,
-                    cursor: 'default',
-                  }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--hover-bg)' }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-                >
-                  <button
-                    style={{ flexShrink: 0, marginTop: 1, background: 'none', border: 'none', cursor: ro ? 'default' : 'pointer', padding: 0 }}
-                    onClick={ro ? undefined : () => toggle.mutate({ todo })}
-                  >
-                    <Circle style={{ width: 16, height: 16, color: overdue ? 'var(--destructive)' : todo._colColor }} />
-                  </button>
-
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    {/* lineHeight matches the 16px circle (marginTop 1) — see TodoRow */}
-                    <p style={{ fontSize: 17, fontWeight: 400, lineHeight: '18px', color: 'var(--foreground)', margin: 0 }}>
-                      {todo.summary}
-                    </p>
-                    {todo.description && (
-                      <p style={{ fontSize: 14, color: 'var(--muted-foreground)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {todo.description}
-                      </p>
-                    )}
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                    {overdue && due && (
-                      <span style={{ fontSize: 14, color: 'var(--destructive)', fontWeight: 500 }}>
-                        {fmtDateShort(due)}
-                      </span>
-                    )}
-                    <CollectionBadge color={todo._colColor} label={todo._colDisplayName} />
-                  </div>
-                </div>
-              )
-            })}
+            {todayTodos.map((todo) => (
+              <GlobalTodoRow
+                key={selKey(todo)}
+                todo={todo}
+                waitingOn={blockerOf.get(selKey(todo))?.summary}
+                selected={selectedSet.has(selKey(todo))}
+                fadingOut={pendingCompletion.has(selKey(todo))}
+                onSelect={(e) => handleRowSelect(todo, e)}
+                onToggle={handleToggle}
+                onOpenCollection={(ref) => { void navigate(`/${ref}`) }}
+              />
+            ))}
           </div>
         )}
       </div>
@@ -342,11 +325,18 @@ export function TodayPage() {
         title="Today"
         detail={todayLabel}
         controls={
-          todayTodos.length > 0 ? (
-            <span style={{ fontSize: 16, color: 'var(--muted-foreground)' }}>
-              {todayTodos.length} task{todayTodos.length !== 1 ? 's' : ''}
-            </span>
-          ) : undefined
+          <>
+            <TodayBulkBar
+              selected={selectedTodos}
+              onClear={clearSel}
+              onCompleted={(items) => items.forEach((t) => pendingCompletion.add(selKey(t)))}
+            />
+            {todayTodos.length > 0 && (
+              <span style={{ fontSize: 16, color: 'var(--muted-foreground)' }}>
+                {todayTodos.length} task{todayTodos.length !== 1 ? 's' : ''}
+              </span>
+            )}
+          </>
         }
       />
 

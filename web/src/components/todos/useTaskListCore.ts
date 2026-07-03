@@ -18,6 +18,7 @@ import { arrayMove } from '@dnd-kit/sortable'
 import { toast } from 'sonner'
 import { caldav } from '@/api'
 import { withOptimism, patchList } from '@/lib/optimistic'
+import { usePendingCompletion } from './usePendingCompletion'
 import type { Todo, Section, Collection } from '@/types'
 
 export interface TaskListCore {
@@ -35,6 +36,8 @@ export interface TaskListCore {
   activeDragTodo: Todo | null
   /** The still-open todo `todo` waits on (via depends_on), if any — undefined once it completes. */
   blockerFor: (todo: Todo) => Todo | undefined
+  /** True while a just-completed todo is in its fade-out grace period (still shown in place, undoable). */
+  isFadingOut: (uid: string) => boolean
   /** The bucket a todo renders in: 'ungrouped' or a valid section id. */
   bucketOf: (todo: Todo) => string
   // Task operations
@@ -60,6 +63,7 @@ export interface TaskListCore {
 
 export function useTaskListCore(collection: string, readOnly: boolean): TaskListCore {
   const qc = useQueryClient()
+  const pendingCompletion = usePendingCompletion()
 
   // ── Queries ───────────────────────────────────────────────────────────────
 
@@ -97,9 +101,11 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
 
   // ── Computed ──────────────────────────────────────────────────────────────
 
+  // Just-completed todos stay in the active list for their fade-out grace period.
+  const pendingSet = pendingCompletion.pending
   const computedActive = useMemo(() =>
     todos
-      .filter(t => t.status !== 'COMPLETED' && t.status !== 'CANCELLED')
+      .filter(t => (t.status !== 'COMPLETED' && t.status !== 'CANCELLED') || pendingSet.has(t.uid))
       .sort((a, b) => {
         if (a.x_sort_order !== undefined && b.x_sort_order !== undefined) return a.x_sort_order - b.x_sort_order
         if (a.x_sort_order !== undefined) return -1
@@ -114,11 +120,14 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
         if (!b.due) return -1
         return a.due.localeCompare(b.due)
       }),
-    [todos, inlineCreatedUids],
+    [todos, inlineCreatedUids, pendingSet],
   )
 
   const activeTodos = optimisticActive ?? computedActive
-  const completed = useMemo(() => todos.filter(t => t.status === 'COMPLETED'), [todos])
+  const completed = useMemo(
+    () => todos.filter(t => t.status === 'COMPLETED' && !pendingSet.has(t.uid)),
+    [todos, pendingSet],
+  )
 
   const byUid = useMemo(() => new Map(todos.map(t => [t.uid, t])), [todos])
   const blockerFor = useCallback((todo: Todo): Todo | undefined => {
@@ -483,8 +492,15 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
     activeDragTodo,
     blockerFor,
     bucketOf: getTaskBucket,
+    isFadingOut: (uid) => pendingCompletion.has(uid),
     // Waiting tasks can't be completed from the row (the checkbox is inert too).
-    toggle: (todo) => { if (!blockerFor(todo)) toggleMut.mutate(todo) },
+    // Completing starts the fade-out grace period; un-completing (undo) ends it.
+    toggle: (todo) => {
+      if (blockerFor(todo)) return
+      toggleMut.mutate(todo)
+      if (todo.status !== 'COMPLETED') pendingCompletion.add(todo.uid)
+      else pendingCompletion.remove(todo.uid)
+    },
     createInlineTodo,
     updateTitle: (todo, newSummary) => updateTitleMut.mutate({ todo, newSummary }),
     moveToCollection: (todos, to) => moveTodosMut.mutate({ todos, to }),

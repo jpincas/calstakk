@@ -65,6 +65,7 @@ export function useRowEditing(core: TaskListCore, accentColor: string, selection
     isExpanded: panelOpenUid === todo.uid,
     selected: selection.isSelected(todo.uid),
     waitingOn: core.blockerFor(todo)?.summary,
+    fadingOut: core.isFadingOut(todo.uid),
     onSelect: (e: React.MouseEvent) => selection.handleRowClick(todo, e),
     onOpenEditor: () => openEditor(todo),
     onEditValueChange: (v: string) => setEditingTodo({ uid: todo.uid, value: v }),

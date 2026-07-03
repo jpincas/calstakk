@@ -1,7 +1,8 @@
 import { useNavigate, useParams } from 'react-router-dom'
 import { Tag } from 'lucide-react'
 import { PageBar } from '@/components/layout/PageBar'
-import { useGlobalTodos, useGlobalToggle } from '@/components/todos/useGlobalTodos'
+import { useGlobalTodos, useGlobalToggle, type GlobalTodo } from '@/components/todos/useGlobalTodos'
+import { usePendingCompletion } from '@/components/todos/usePendingCompletion'
 import { GlobalTodoRow } from '@/components/todos/GlobalTodoRow'
 
 /**
@@ -11,11 +12,24 @@ import { GlobalTodoRow } from '@/components/todos/GlobalTodoRow'
 export function TagPage() {
   const { tag = '' } = useParams<{ tag: string }>()
   const navigate = useNavigate()
-  const { active, waiting, isLoading } = useGlobalTodos()
+  const { all, waiting, isLoading } = useGlobalTodos()
   const toggle = useGlobalToggle()
+  const pendingCompletion = usePendingCompletion()
+  const key = (t: GlobalTodo) => `${t._colRef}/${t.uid}`
 
-  const matches = active.filter((t) => (t.categories ?? []).includes(tag))
-  const blockerOf = new Map(waiting.map(({ todo, blocker }) => [`${todo._colRef}/${todo.uid}`, blocker]))
+  // Just-completed tasks stay for their fade-out grace period.
+  const matches = all.filter((t) => {
+    if (!(t.categories ?? []).includes(tag)) return false
+    const isActive = t.status !== 'COMPLETED' && t.status !== 'CANCELLED'
+    return isActive || pendingCompletion.has(key(t))
+  })
+  const blockerOf = new Map(waiting.map(({ todo, blocker }) => [key(todo), blocker]))
+
+  const handleToggle = (t: GlobalTodo) => {
+    toggle.mutate(t)
+    if (t.status !== 'COMPLETED') pendingCompletion.add(key(t))
+    else pendingCompletion.remove(key(t))
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: 'var(--background)' }}>
@@ -37,10 +51,11 @@ export function TagPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             {matches.map((todo) => (
               <GlobalTodoRow
-                key={`${todo._colRef}-${todo.uid}`}
+                key={key(todo)}
                 todo={todo}
-                waitingOn={blockerOf.get(`${todo._colRef}/${todo.uid}`)?.summary}
-                onToggle={(t) => toggle.mutate(t)}
+                waitingOn={blockerOf.get(key(todo))?.summary}
+                fadingOut={pendingCompletion.has(key(todo))}
+                onToggle={handleToggle}
                 onOpenCollection={(ref) => { void navigate(`/${ref}`) }}
               />
             ))}

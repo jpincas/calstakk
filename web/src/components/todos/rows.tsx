@@ -25,6 +25,8 @@ export interface TodoRowProps {
   selected: boolean
   /** Summary of the task this one is waiting on — set only while that task is still open. */
   waitingOn?: string
+  /** Just completed: render fading out with an inline Undo until the grace period ends. */
+  fadingOut?: boolean
   /** Single click — selection (plain/ctrl/shift semantics live in the handler). */
   onSelect: (e: React.MouseEvent) => void
   /** Double click — enter edit mode (inline title + detail panel). */
@@ -53,7 +55,7 @@ function InlineChip({ bg, color, children }: { bg: string; color: string; childr
 
 export function TodoRow({
   todo, accentColor, readOnly, onToggle,
-  isEditingTitle, editingValue, isExpanded, selected, waitingOn,
+  isEditingTitle, editingValue, isExpanded, selected, waitingOn, fadingOut,
   onSelect, onOpenEditor, onEditValueChange, onEditBlur, onEditKeyDown,
 }: TodoRowProps) {
   const [hovered, setHovered] = useState(false)
@@ -79,6 +81,11 @@ export function TodoRow({
       onClick={!isEditingTitle ? onSelect : undefined}
       onDoubleClick={!isEditingTitle ? onOpenEditor : undefined}
     >
+      {/* Everything except the Undo pill fades during the completion grace period */}
+      <div
+        className={fadingOut ? 'task-fading-out' : undefined}
+        style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flex: 1, minWidth: 0 }}
+      >
       <button
         title={waiting ? `Waiting on “${waitingOn}”` : undefined}
         style={{ flexShrink: 0, marginTop: 1, background: 'none', border: 'none', cursor: readOnly || waiting ? 'default' : 'pointer', padding: 0 }}
@@ -136,7 +143,29 @@ export function TodoRow({
           </span>
         )
       )}
+      </div>
+      {fadingOut && (
+        <UndoPill onClick={(e) => { e.stopPropagation(); onToggle() }} />
+      )}
     </div>
+  )
+}
+
+/** Solid (never faded) inline cancel for a completion in its grace period. */
+export function UndoPill({ onClick }: { onClick: (e: React.MouseEvent) => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title="Keep this task active"
+      style={{
+        flexShrink: 0, padding: '1px 10px', borderRadius: 20,
+        border: '1px solid var(--border)', background: 'var(--card)',
+        color: 'var(--foreground)', fontSize: 13, fontWeight: 600,
+        cursor: 'pointer', lineHeight: '16px',
+      }}
+    >
+      Undo
+    </button>
   )
 }
 
