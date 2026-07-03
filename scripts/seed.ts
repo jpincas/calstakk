@@ -69,6 +69,7 @@ function vevent(fields: {
 function vtodo(fields: {
   uid?: string; summary: string; due?: string; status?: string
   priority?: number; description?: string; categories?: string
+  section?: string; order?: number
 }): string {
   const u = fields.uid ?? uid()
   const s = stamp()
@@ -79,6 +80,8 @@ function vtodo(fields: {
   if (fields.priority !== undefined) lines.push(`PRIORITY:${fields.priority}`)
   if (fields.description) lines.push(`DESCRIPTION:${fields.description}`)
   if (fields.categories) lines.push(`CATEGORIES:${fields.categories}`)
+  if (fields.section) lines.push(`X-SECTION-ID:${fields.section}`)
+  if (fields.order !== undefined) lines.push(`X-SORT-ORDER:${fields.order}`)
   lines.push('END:VTODO')
   return `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalStakk//Seed//EN\r\n${lines.join('\r\n')}\r\nEND:VCALENDAR\r\n`
 }
@@ -114,6 +117,13 @@ async function proppatch(name: string, setPropXml: string, home = HOME): Promise
 
 async function setGroup(name: string, group: string): Promise<void> {
   await proppatch(name, `<cs:group xmlns:cs="${CS_NS}">${group}</cs:group>`)
+}
+
+/** Persist the ordered section registry (cs:sections JSON dead-property, as the web client does). */
+async function setSections(name: string, sections: Array<{ id: string; name: string }>, home = HOME): Promise<void> {
+  const json = JSON.stringify(sections)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  await proppatch(name, `<cs:sections xmlns:cs="${CS_NS}">${json}</cs:sections>`, home)
 }
 
 async function putObject(collection: string, icsUid: string, ics: string, home = HOME): Promise<void> {
@@ -185,6 +195,20 @@ const COLLECTIONS = [
   { name: 'health',   display: 'Health',            color: '#F59E0B', group: 'Life' },
   { name: 'home',     display: 'Home',             color: '#E35E5E', group: 'Life' },
 ]
+
+// Ordered section registries (drag-reorderable in the UI). Todos opt in via
+// `section:` below; the rest render in the ungrouped area above the sections.
+const SECTIONS: Record<string, Array<{ id: string; name: string }>> = {
+  work: [
+    { id: 'work-in-review',   name: 'In review' },
+    { id: 'work-this-sprint', name: 'This sprint' },
+    { id: 'work-backlog',     name: 'Backlog' },
+  ],
+  home: [
+    { id: 'home-weekend', name: 'This weekend' },
+    { id: 'home-someday', name: 'Someday' },
+  ],
+}
 
 const EVENTS: Array<{ collection: string; fields: Parameters<typeof vevent>[0] }> = [
   // ── Work events ──
@@ -315,16 +339,16 @@ function rawVcal(lines: string[]): string {
 }
 
 const TODOS: Array<{ collection: string; fields: Parameters<typeof vtodo>[0] }> = [
-  // ── Work todos ──
-  { collection: 'work', fields: { summary: 'Write technical spec for auth refactor', priority: 1, due: date(3), description: 'Cover OAuth2 flows, token storage, and migration path' } },
-  { collection: 'work', fields: { summary: 'Review 3 open PRs in queue', priority: 2, due: date(1) } },
-  { collection: 'work', fields: { summary: 'Update API docs after v2 release', priority: 3, due: date(5) } },
+  // ── Work todos (sectioned: In review / This sprint / Backlog; two stay ungrouped) ──
+  { collection: 'work', fields: { summary: 'Write technical spec for auth refactor', priority: 1, due: date(3), description: 'Cover OAuth2 flows, token storage, and migration path', section: 'work-this-sprint', order: 1000 } },
+  { collection: 'work', fields: { summary: 'Review 3 open PRs in queue', priority: 2, due: date(1), section: 'work-in-review' } },
+  { collection: 'work', fields: { summary: 'Update API docs after v2 release', priority: 3, due: date(5), section: 'work-backlog' } },
   { collection: 'work', fields: { summary: 'Set up staging environment for new service', priority: 2, due: date(7) } },
-  { collection: 'work', fields: { summary: 'Fix flaky integration test in CI', priority: 1, due: date(2) } },
-  { collection: 'work', fields: { summary: 'Migrate legacy config to env vars', priority: 5 } },
+  { collection: 'work', fields: { summary: 'Fix flaky integration test in CI', priority: 1, due: date(2), section: 'work-this-sprint', order: 2000 } },
+  { collection: 'work', fields: { summary: 'Migrate legacy config to env vars', priority: 5, section: 'work-backlog' } },
   { collection: 'work', fields: { summary: 'Draft Q3 OKRs', priority: 2, due: date(4) } },
-  { collection: 'work', fields: { summary: 'Respond to security audit findings', priority: 1, due: date(1), description: 'Items 3, 7, 12 need immediate response' } },
-  { collection: 'work', fields: { summary: 'Archive old S3 buckets', priority: 9, status: 'IN-PROCESS' } },
+  { collection: 'work', fields: { summary: 'Respond to security audit findings', priority: 1, due: date(1), description: 'Items 3, 7, 12 need immediate response', section: 'work-this-sprint', order: 3000 } },
+  { collection: 'work', fields: { summary: 'Archive old S3 buckets', priority: 9, status: 'IN-PROCESS', section: 'work-backlog' } },
   { collection: 'work', fields: { summary: 'Onboard new engineer — access provisioning', status: 'COMPLETED', priority: 2 } },
   { collection: 'work', fields: { summary: 'Update runbook for deploy process', status: 'COMPLETED', priority: 3 } },
 
@@ -354,12 +378,12 @@ const TODOS: Array<{ collection: string; fields: Parameters<typeof vtodo>[0] }> 
   { collection: 'health', fields: { summary: 'Try new meal prep routine', priority: 6, status: 'IN-PROCESS' } },
   { collection: 'health', fields: { summary: 'Schedule eye test', priority: 3 } },
 
-  // ── Home todos ──
-  { collection: 'home', fields: { summary: 'Fix leaking kitchen tap', priority: 1, due: date(1) } },
+  // ── Home todos (sectioned: This weekend / Someday; one stays ungrouped) ──
+  { collection: 'home', fields: { summary: 'Fix leaking kitchen tap', priority: 1, due: date(1), section: 'home-weekend' } },
   { collection: 'home', fields: { summary: 'Clean oven before inspection', priority: 2, due: date(12) } },
-  { collection: 'home', fields: { summary: 'Buy new desk lamp', priority: 7 } },
-  { collection: 'home', fields: { summary: 'Sort recycling', priority: 8, due: date(1) } },
-  { collection: 'home', fields: { summary: 'Repot the monstera', priority: 9, status: 'IN-PROCESS' } },
+  { collection: 'home', fields: { summary: 'Buy new desk lamp', priority: 7, section: 'home-someday' } },
+  { collection: 'home', fields: { summary: 'Sort recycling', priority: 8, due: date(1), section: 'home-weekend' } },
+  { collection: 'home', fields: { summary: 'Repot the monstera', priority: 9, status: 'IN-PROCESS', section: 'home-someday' } },
 
   // ── Inbox / capture todos ──
   { collection: 'capture', fields: { summary: 'Look into Tailscale for home network', priority: 5 } },
@@ -387,12 +411,18 @@ const ANNA_EVENTS: Array<Parameters<typeof vevent>[0]> = [
   { summary: 'Hack day', start: date(9), end: date(10), allDay: true },
 ]
 
+// Sections on a shared collection: sharees see them too (read-only for `read` access)
+const ANNA_SECTIONS = [
+  { id: 'team-launch-prep', name: 'Launch prep' },
+  { id: 'team-ongoing',     name: 'Ongoing' },
+]
+
 const ANNA_TODOS: Array<Parameters<typeof vtodo>[0]> = [
-  { summary: 'Prepare demo environment', priority: 1, due: date(2) },
-  { summary: 'Collect feedback from beta users', priority: 2, due: date(4) },
-  { summary: 'Write release notes', priority: 3, due: date(6) },
-  { summary: 'Triage open bugs', priority: 2, status: 'IN-PROCESS' },
-  { summary: 'Update team wiki', priority: 5 },
+  { summary: 'Prepare demo environment', priority: 1, due: date(2), section: 'team-launch-prep' },
+  { summary: 'Collect feedback from beta users', priority: 2, due: date(4), section: 'team-launch-prep' },
+  { summary: 'Write release notes', priority: 3, due: date(6), section: 'team-launch-prep' },
+  { summary: 'Triage open bugs', priority: 2, status: 'IN-PROCESS', section: 'team-ongoing' },
+  { summary: 'Update team wiki', priority: 5, section: 'team-ongoing' },
   { summary: 'Order new monitors', priority: 4, status: 'COMPLETED' },
 ]
 
@@ -415,7 +445,9 @@ console.log('\nCreating collections...')
 for (const col of COLLECTIONS) {
   await mkcalendar(col.name, col.display, col.color)
   await setGroup(col.name, col.group)
-  console.log(`  ${col.display} [${col.group}]`)
+  const sections = SECTIONS[col.name]
+  if (sections) await setSections(col.name, sections)
+  console.log(`  ${col.display} [${col.group}]${sections ? ` — ${sections.length} sections` : ''}`)
 }
 
 // Also update existing personal's group if it was re-created above — done.
@@ -454,6 +486,7 @@ console.log("\nSeeding anna's team calendar...")
 const annaHome = homeOf('anna')
 await deleteCollection(ANNA_COLLECTION.name, annaHome)
 await mkcalendar(ANNA_COLLECTION.name, ANNA_COLLECTION.display, ANNA_COLLECTION.color, annaHome)
+await setSections(ANNA_COLLECTION.name, ANNA_SECTIONS, annaHome)
 for (const fields of ANNA_EVENTS) {
   const u = uid()
   await putObject(ANNA_COLLECTION.name, u, vevent({ ...fields, uid: u }), annaHome)

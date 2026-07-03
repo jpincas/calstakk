@@ -21,7 +21,6 @@ import {
 import {
   DragOverlay, useDndMonitor,
   type DragEndEvent, type DragStartEvent,
-  useDroppable,
 } from '@dnd-kit/core'
 import {
   SortableContext, useSortable, arrayMove, verticalListSortingStrategy,
@@ -221,22 +220,44 @@ function TaskContextMenu({ children, collections, currentCollection, onMove, onS
   )
 }
 
-// ── DroppableSection ──────────────────────────────────────────────────────────
-// Wraps an entire section (header + tasks) as a single droppable zone.
-// This prevents the drag overlay from snapping back when the pointer crosses
-// the section header, which has no droppable registration of its own.
+// ── SortableSection ───────────────────────────────────────────────────────────
+// Wraps an entire section (header + tasks) as a single sortable block: the
+// header acts as the drag handle for reordering whole sections, and the
+// block's droppable registration doubles as the drop zone for task drags
+// (so the overlay doesn't snap back when the pointer crosses the header,
+// and empty sections stay valid targets).
 
-interface DroppableSectionProps {
-  containerId: string
+interface SortableSectionProps {
+  sectionId: string
+  readOnly: boolean
+  /** Drag listeners come off the header while its name is being edited — text selection in the input must not start a drag. */
+  headerDragDisabled: boolean
+  header: React.ReactNode
   children: React.ReactNode
 }
 
-function DroppableSection({ containerId, children }: DroppableSectionProps) {
-  const { setNodeRef } = useDroppable({
-    id: containerId,
-    data: { type: 'container', containerId },
+function SortableSection({ sectionId, readOnly, headerDragDisabled, header, children }: SortableSectionProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: sectionId,
+    data: { type: 'section', containerId: sectionId },
+    disabled: readOnly,
   })
-  return <div ref={setNodeRef}>{children}</div>
+  const handleProps = readOnly || headerDragDisabled ? {} : { ...attributes, ...listeners }
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.55 : 1,
+        position: 'relative',
+        zIndex: isDragging ? 10 : undefined,
+      }}
+    >
+      <div {...handleProps} style={{ cursor: readOnly ? undefined : 'grab' }}>{header}</div>
+      {children}
+    </div>
+  )
 }
 
 // ── SectionBucket ─────────────────────────────────────────────────────────────
@@ -602,6 +623,19 @@ export function TaskList({ collection, accentColor, readOnly = false }: TaskList
     setActiveDragId(null)
     if (readOnly) return // sortables are disabled too; belt and braces
     if (!over) return
+
+    // Section reorder: collision detection restricts section drags to section
+    // blocks, so over.id is always another section's id.
+    if (dragActive.data.current?.type === 'section') {
+      const oldIndex = sections.findIndex(s => s.id === String(dragActive.id))
+      const newIndex = sections.findIndex(s => s.id === String(over.id))
+      if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return
+      const updated = arrayMove([...sections], oldIndex, newIndex)
+      qc.setQueryData(['sections', collection], updated)
+      updateSectionsMut.mutate(updated)
+      return
+    }
+
     if (dragActive.data.current?.type !== 'task') return
 
     if (over.data.current?.type === 'collection') {
@@ -619,7 +653,7 @@ export function TaskList({ collection, accentColor, readOnly = false }: TaskList
     const overData = over.data.current
     const targetContainerId: string =
       overData?.type === 'task' ? (overData.containerId as string) :
-      overData?.type === 'container' ? (overData.containerId as string) :
+      overData?.type === 'section' ? (overData.containerId as string) :
       sourceContainerId
 
     const curActive = optimisticActive ?? computedActive
@@ -702,7 +736,7 @@ export function TaskList({ collection, accentColor, readOnly = false }: TaskList
         }
       })
     }
-  }, [optimisticActive, computedActive, sections, getTaskBucket, dragUpdate, collection, moveTodo, readOnly])
+  }, [optimisticActive, computedActive, sections, getTaskBucket, dragUpdate, collection, moveTodo, readOnly, qc, updateSectionsMut])
 
   // ── Inline-add handlers ───────────────────────────────────────────────────
 
@@ -854,42 +888,51 @@ export function TaskList({ collection, accentColor, readOnly = false }: TaskList
           )}
 
           {/* Sections */}
-          {sections.map((section, idx) => (
-            <DroppableSection key={section.id} containerId={section.id}>
-              <SectionHeader
-                section={section}
-                taskCount={(sectionedTasks[section.id] ?? []).length}
+          <SortableContext items={sections.map(s => s.id)} strategy={verticalListSortingStrategy}>
+            {sections.map((section, idx) => (
+              <SortableSection
+                key={section.id}
+                sectionId={section.id}
                 readOnly={readOnly}
-                isFirst={idx === 0}
-                isLast={idx === sections.length - 1}
-                onMoveUp={() => moveSectionUp(section.id)}
-                onMoveDown={() => moveSectionDown(section.id)}
-                onDelete={() => deleteSection(section.id)}
-                onAdd={() => { setShowInlineNew(section.id); setInlineNewValue('') }}
-                isEditing={editingSectionId === section.id}
-                editValue={sectionNameInput}
-                onStartEdit={() => { setEditingSectionId(section.id); setSectionNameInput(section.name) }}
-                onEditChange={setSectionNameInput}
-                onEditCommit={() => { renameSection(section.id, sectionNameInput); setEditingSectionId(null) }}
-                onEditCancel={() => setEditingSectionId(null)}
-              />
-              <SectionBucket
-                containerId={section.id}
-                tasks={sectionedTasks[section.id] ?? []}
-                renderRow={(t) => renderTodoRow(t, section.id)}
-              />
-              {showInlineNew === section.id && (
-                <InlineNewRow
-                  value={inlineNewValue}
-                  accentColor={accentColor}
-                  inputRef={inlineNewRef}
-                  onChange={setInlineNewValue}
-                  onKeyDown={handleInlineNewKey}
-                  onBlur={handleInlineNewBlur}
+                headerDragDisabled={editingSectionId === section.id}
+                header={
+                  <SectionHeader
+                    section={section}
+                    taskCount={(sectionedTasks[section.id] ?? []).length}
+                    readOnly={readOnly}
+                    isFirst={idx === 0}
+                    isLast={idx === sections.length - 1}
+                    onMoveUp={() => moveSectionUp(section.id)}
+                    onMoveDown={() => moveSectionDown(section.id)}
+                    onDelete={() => deleteSection(section.id)}
+                    onAdd={() => { setShowInlineNew(section.id); setInlineNewValue('') }}
+                    isEditing={editingSectionId === section.id}
+                    editValue={sectionNameInput}
+                    onStartEdit={() => { setEditingSectionId(section.id); setSectionNameInput(section.name) }}
+                    onEditChange={setSectionNameInput}
+                    onEditCommit={() => { renameSection(section.id, sectionNameInput); setEditingSectionId(null) }}
+                    onEditCancel={() => setEditingSectionId(null)}
+                  />
+                }
+              >
+                <SectionBucket
+                  containerId={section.id}
+                  tasks={sectionedTasks[section.id] ?? []}
+                  renderRow={(t) => renderTodoRow(t, section.id)}
                 />
-              )}
-            </DroppableSection>
-          ))}
+                {showInlineNew === section.id && (
+                  <InlineNewRow
+                    value={inlineNewValue}
+                    accentColor={accentColor}
+                    inputRef={inlineNewRef}
+                    onChange={setInlineNewValue}
+                    onKeyDown={handleInlineNewKey}
+                    onBlur={handleInlineNewBlur}
+                  />
+                )}
+              </SortableSection>
+            ))}
+          </SortableContext>
 
           <DragOverlay dropAnimation={null}>
             {activeDragId ? (() => {

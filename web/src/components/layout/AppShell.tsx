@@ -12,7 +12,18 @@ import { CollectionSidebar } from './CollectionSidebar'
 // Prefer the exact pointer position (needed to reliably hit small, distant
 // targets like a sidebar row) and fall back to corner-distance for in-list
 // sorting, where pointerWithin can be too strict between adjacent rows.
+// Section drags only ever land on other section blocks — restrict the
+// candidate set so the pointer hitting a task row inside a section doesn't
+// mask the section itself.
 const collisionDetection: CollisionDetection = (args) => {
+  if (args.active.data.current?.type === 'section') {
+    return closestCorners({
+      ...args,
+      droppableContainers: args.droppableContainers.filter(
+        (c) => c.data.current?.type === 'section',
+      ),
+    })
+  }
   const pointerCollisions = pointerWithin(args)
   return pointerCollisions.length > 0 ? pointerCollisions : closestCorners(args)
 }
