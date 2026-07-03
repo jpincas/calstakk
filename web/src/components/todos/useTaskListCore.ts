@@ -18,6 +18,7 @@ import { arrayMove } from '@dnd-kit/sortable'
 import { toast } from 'sonner'
 import { caldav } from '@/api'
 import { withOptimism, patchList } from '@/lib/optimistic'
+import { compareTodos } from '@/lib/todoOrder'
 import { usePendingCompletion } from './usePendingCompletion'
 import type { Todo, Section, Collection } from '@/types'
 
@@ -106,20 +107,7 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
   const computedActive = useMemo(() =>
     todos
       .filter(t => (t.status !== 'COMPLETED' && t.status !== 'CANCELLED') || pendingSet.has(t.uid))
-      .sort((a, b) => {
-        if (a.x_sort_order !== undefined && b.x_sort_order !== undefined) return a.x_sort_order - b.x_sort_order
-        if (a.x_sort_order !== undefined) return -1
-        if (b.x_sort_order !== undefined) return 1
-        const ai = inlineCreatedUids.indexOf(a.uid)
-        const bi = inlineCreatedUids.indexOf(b.uid)
-        if (ai !== -1 && bi !== -1) return ai - bi
-        if (ai !== -1) return 1
-        if (bi !== -1) return -1
-        if (!a.due && !b.due) return 0
-        if (!a.due) return 1
-        if (!b.due) return -1
-        return a.due.localeCompare(b.due)
-      }),
+      .sort((a, b) => compareTodos(a, b, inlineCreatedUids)),
     [todos, inlineCreatedUids, pendingSet],
   )
 

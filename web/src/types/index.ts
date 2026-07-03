@@ -137,4 +137,4 @@ export interface Section {
 }
 
 export type DataType = 'calendar' | 'todos'
-export type ViewMode = 'inbox' | 'today' | 'tasks' | 'waiting' | 'calendar'
+export type ViewMode = 'home' | 'inbox' | 'today' | 'tasks' | 'waiting' | 'calendar'

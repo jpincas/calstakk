@@ -7,23 +7,13 @@ import { calendarLinkFor, fmtTime } from '@/lib/dates'
 import { expandEvent, type Occurrence } from '@/lib/recur'
 import { collectionColor } from '@/lib/colors'
 import { useCollectionStore } from '@/state/collection'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog'
-import { toast } from 'sonner'
 import { Settings, Plus, Share2, Eye, Columns3, LayoutList } from 'lucide-react'
 import { PageBar, PageBarIconButton } from '@/components/layout/PageBar'
 import { TasksView } from '@/components/todos/TasksView'
 import { TaskBulkBar } from '@/components/todos/TaskBulkBar'
 import { ShareDialog } from '@/components/ShareDialog'
 import { NewTaskDialog } from '@/components/NewTaskDialog'
+import { EventDialog } from '@/components/calendar/EventDialog'
 import { ProjectSettingsDialog } from '@/components/ProjectSettingsDialog'
 import {
   format,
@@ -45,26 +35,6 @@ const BUCKET_ORDER = ['Today', 'This Week', 'This Month', 'Next Month', 'Later']
 type Bucket = typeof BUCKET_ORDER[number]
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-interface EventForm {
-  uid: string
-  summary: string
-  start: string
-  end: string
-  description: string
-  location: string
-  href: string
-}
-
-const emptyEventForm = (): EventForm => ({
-  uid: crypto.randomUUID(),
-  summary: '',
-  start: '',
-  end: '',
-  description: '',
-  location: '',
-  href: '',
-})
 
 function getEventBucket(start: Date, today: Date): Bucket | null {
   if (isBefore(start, startOfDay(today))) return null
@@ -170,7 +140,7 @@ export function ProjectPage() {
   // ── UI state ─────────────────────────────────────────────────────────────
 
   const [newTaskOpen, setNewTaskOpen] = useState(false)
-  const [eventForm, setEventForm] = useState<EventForm | null>(null)
+  const [newEventOpen, setNewEventOpen] = useState(false)
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState('')
   const [isNarrow, setIsNarrow] = useState(false)
@@ -192,26 +162,6 @@ export function ProjectPage() {
   }, [])
 
   // ── Mutations ─────────────────────────────────────────────────────────────
-
-  const formToEvent = (f: EventForm): Omit<CalEvent, 'href'> => ({
-    uid: f.uid,
-    summary: f.summary,
-    start: f.start || new Date().toISOString(),
-    end: f.end || undefined,
-    description: f.description || undefined,
-    location: f.location || undefined,
-  })
-
-  const eventSave = useMutation({
-    mutationFn: (event: Omit<CalEvent, 'href'>) => caldav.createEvent(colName!, event),
-    ...withOptimism<Omit<CalEvent, 'href'>>(qc, {
-      patches: (event) => [
-        patchList<CalEvent>(['events', colName], (events) => [...events, { ...event, href: '' }]),
-      ],
-      sideEffects: () => setEventForm(null),
-      onSuccess: () => toast.success('Event created'),
-    }),
-  })
 
   const saveName = useMutation({
     mutationFn: (name: string) =>
@@ -465,7 +415,7 @@ export function ProjectPage() {
             )}
             {!readOnly && (
             <button
-              onClick={() => setEventForm(emptyEventForm())}
+              onClick={() => setNewEventOpen(true)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 5,
                 padding: '5px 10px', borderRadius: 7,
@@ -554,35 +504,17 @@ export function ProjectPage() {
 
       <NewTaskDialog collection={colName} accentColor={color.bg} open={newTaskOpen} onOpenChange={setNewTaskOpen} />
 
-      {/* New event modal */}
-      <Dialog open={!!eventForm} onOpenChange={(o) => !o && setEventForm(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>New event</DialogTitle>
-          </DialogHeader>
-          {eventForm && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 4 }}>
-              <div><Label>Title</Label><Input autoFocus value={eventForm.summary} onChange={(e) => setEventForm({ ...eventForm, summary: e.target.value })} /></div>
-              <div>
-                <Label>Start <span style={{ fontWeight: 400, color: 'var(--muted-foreground)' }}>(ISO 8601)</span></Label>
-                <Input value={eventForm.start} onChange={(e) => setEventForm({ ...eventForm, start: e.target.value })} placeholder="2026-07-01T09:00:00Z" />
-              </div>
-              <div><Label>End</Label><Input value={eventForm.end} onChange={(e) => setEventForm({ ...eventForm, end: e.target.value })} /></div>
-              <div><Label>Location</Label><Input value={eventForm.location} onChange={(e) => setEventForm({ ...eventForm, location: e.target.value })} /></div>
-              <div><Label>Description</Label><Input value={eventForm.description} onChange={(e) => setEventForm({ ...eventForm, description: e.target.value })} /></div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button
-              onClick={() => eventSave.mutate(formToEvent(eventForm!))}
-              disabled={eventSave.isPending || !eventForm?.summary}
-              style={{ background: color.bg, color: '#fff', border: 'none' }}
-            >
-              Create event
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* New event modal — the calendar's dialog, so both entry points match */}
+      {newEventOpen && (
+        <EventDialog
+          occurrence={null}
+          collections={collections}
+          colRef={colName}
+          showCollectionPicker={false}
+          readOnly={readOnly}
+          onClose={() => setNewEventOpen(false)}
+        />
+      )}
 
       {/* Settings modal — shared with the sidebar's right-click menu */}
       <ProjectSettingsDialog collectionRef={colName} open={settingsOpen} onOpenChange={setSettingsOpen} />

@@ -5,6 +5,7 @@ import { BrowserRouter, Route, Routes, Navigate } from 'react-router-dom'
 import { Toaster } from '@/components/ui/sonner'
 import { AppShell } from '@/components/layout/AppShell'
 import { CalendarPage } from '@/pages/calendar'
+import { DashboardPage } from '@/pages/dashboard'
 import { TodosPage } from '@/pages/todos'
 import { TodayPage } from '@/pages/today'
 import { ProjectPage } from '@/pages/project'
@@ -48,6 +49,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="login" element={<LoginPage />} />
           <Route path="/" element={<AppShell />}>
             <Route index element={null} />
+            <Route path="home"        element={<DashboardPage />} />
             <Route path="today"       element={<TodayPage />} />
             <Route path="inbox"       element={<TodosPage />} />
             <Route path="tasks"       element={<TasksPage />} />
@@ -57,7 +59,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="users"       element={<UsersPage />} />
             <Route path=":collection" element={<ProjectPage />} />
           </Route>
-          <Route path="*" element={<Navigate to="/today" replace />} />
+          <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
       </BrowserRouter>
       <Toaster />

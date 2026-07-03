@@ -4,6 +4,7 @@ import { caldav } from '@/api'
 import { withOptimism, patchList } from '@/lib/optimistic'
 import { Trash2, Link } from 'lucide-react'
 import { toast } from 'sonner'
+import { DateInput } from '@/components/DateInput'
 import type { Todo } from '@/types'
 
 function icalToInput(s?: string): string {
@@ -158,7 +159,7 @@ export function TodoEditPanel({ todo, collection, accentColor, readOnly = false,
       <div style={{ display: 'flex', gap: 10 }}>
         <div style={{ flex: 1 }}>
           <span style={labelStyle}>Due</span>
-          <input type="date" value={due} onChange={(e) => setDue(e.target.value)} disabled={readOnly} style={inputStyle} />
+          <DateInput value={due} onChange={setDue} disabled={readOnly} style={inputStyle} wrapperStyle={{ width: '100%' }} />
         </div>
         <div style={{ flex: 1 }}>
           <span style={labelStyle}>Status</span>

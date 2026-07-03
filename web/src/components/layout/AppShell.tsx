@@ -101,7 +101,7 @@ export function AppShell() {
 
   const atRoot = location.pathname === '/' || location.pathname === ''
   if (atRoot) {
-    return <Navigate to="/today" replace />
+    return <Navigate to="/home" replace />
   }
 
   return (

@@ -15,7 +15,7 @@ import { enUS } from 'date-fns/locale'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
 import { caldav } from '@/api'
-import { collectionColor } from '@/lib/colors'
+import { displayColor } from '@/lib/colors'
 import { parseCalDate, fmtTime } from '@/lib/dates'
 import { expandEvent, shiftSeries, toICalString, type Occurrence } from '@/lib/recur'
 import { EventDialog } from '@/components/calendar/EventDialog'
@@ -91,8 +91,6 @@ export function CalendarPage() {
     queryFn: () => caldav.listCollections(),
   })
 
-  const names = collections.map((c: Collection) => c.ref)
-
   // Read-only shared collections: their events must not be dragged/resized/edited.
   const readOnlyRefs = new Set(
     collections.filter((c: Collection) => c.myAccess === 'read').map((c: Collection) => c.ref)
@@ -122,9 +120,7 @@ export function CalendarPage() {
         : collections.filter((c: Collection) => !hiddenCollections.includes(c.ref)))
     : collections.filter((c: Collection) => c.ref === collectionParam)
 
-  const accentColor = collectionParam
-    ? collectionColor(names, collectionParam)
-    : { bg: '#6366F1', text: '#fff', light: '#eef2ff', border: '#a5b4fc', muted: '#c7d2fe' }
+  const accentBg = collectionParam ? displayColor(collections, collectionParam) : '#6366F1'
 
   const [searchParams, setSearchParams] = useSearchParams()
   const [view, setView] = useState<View>(() => viewParamOf(searchParams) ?? 'month')
@@ -279,7 +275,7 @@ export function CalendarPage() {
     padding: '4px 10px',
     fontSize: 16,
     fontWeight: 500,
-    background: active ? accentColor.bg : 'transparent',
+    background: active ? accentBg : 'transparent',
     color: active ? '#fff' : 'var(--muted-foreground)',
     border: 'none',
     cursor: 'pointer',
@@ -289,7 +285,7 @@ export function CalendarPage() {
   return (
     <div
       className="flex flex-col h-full"
-      style={{ '--cal-accent': accentColor.bg } as React.CSSProperties}
+      style={{ '--cal-accent': accentBg } as React.CSSProperties}
     >
       <PageBar
         icon={<CalendarDays size={14} color="#6366F1" strokeWidth={2.2} />}
@@ -316,7 +312,7 @@ export function CalendarPage() {
                 display: 'flex', alignItems: 'center', gap: 5,
                 padding: '4px 10px', borderRadius: 7,
                 border: '1px solid var(--border)',
-                background: showTasksOnCalendar ? accentColor.bg : 'transparent',
+                background: showTasksOnCalendar ? accentBg : 'transparent',
                 color: showTasksOnCalendar ? '#fff' : 'var(--muted-foreground)',
                 fontSize: 16, fontWeight: 500, cursor: 'pointer',
                 transition: 'background 100ms, color 100ms',
@@ -342,7 +338,7 @@ export function CalendarPage() {
                 style={{
                   display: 'flex', alignItems: 'center', gap: 5,
                   padding: '5px 10px', borderRadius: 7, border: 'none',
-                  background: accentColor.bg, color: '#fff',
+                  background: accentBg, color: '#fff',
                   fontSize: 16, fontWeight: 600, cursor: 'pointer',
                 }}
               >
@@ -386,7 +382,7 @@ export function CalendarPage() {
             onEventResize={handleMove}
             eventPropGetter={(event) => {
               const colName = (event).resource?._colName
-              const c = colName ? collectionColor(names, colName) : accentColor
+              const bg = colName ? displayColor(collections, colName) : accentBg
               if (event.resource.kind === 'todo') {
                 return {
                   style: {
@@ -402,7 +398,7 @@ export function CalendarPage() {
               return event.allDay
                 ? {
                     style: {
-                      backgroundColor: c.bg,
+                      backgroundColor: bg,
                       color: '#fff',
                       borderColor: 'transparent',
                       borderRadius: 4,
@@ -424,11 +420,11 @@ export function CalendarPage() {
             components={{
               event: ({ event }: { event: RBCEvent }) => {
                 const colName = event.resource?._colName
-                const c = colName ? collectionColor(names, colName) : accentColor
+                const bg = colName ? displayColor(collections, colName) : accentBg
                 if (event.resource.kind === 'todo') {
                   return (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden' }}>
-                      <CheckCircle2 style={{ width: 12, height: 12, color: c.bg, flexShrink: 0 }} strokeWidth={2.5} />
+                      <CheckCircle2 style={{ width: 12, height: 12, color: bg, flexShrink: 0 }} strokeWidth={2.5} />
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{event.title}</span>
                     </span>
                   )
@@ -436,7 +432,7 @@ export function CalendarPage() {
                 if (event.allDay) return <>{event.title}</>
                 return (
                   <span style={{ display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden' }}>
-                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: c.bg, flexShrink: 0 }} />
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: bg, flexShrink: 0 }} />
                     <span style={{ opacity: 0.75, flexShrink: 0 }}>{fmtTime(event.start)}</span>
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{event.title}</span>
                   </span>
@@ -473,7 +469,7 @@ export function CalendarPage() {
       {/* Scope chooser for dragging/resizing a recurring occurrence */}
       <ScopeDialog
         open={!!pendingMove}
-        accent={accentColor.bg}
+        accent={accentBg}
         title="Move recurring event"
         warning={moveResetsOverrides
           ? 'Moving all events resets skipped and edited occurrences of this series.'

@@ -29,6 +29,17 @@ export function collectionColor(collections: string[], name: string): Collection
   return PALETTE[Math.max(0, idx) % PALETTE.length]
 }
 
+/**
+ * The colour a collection actually displays as everywhere in the app: its
+ * explicit colour override when set, else its palette slot. Use this (not
+ * collectionColor directly) wherever a collection is identified by colour.
+ */
+export function displayColor(collections: { ref: string; color?: string }[], ref: string): string {
+  const col = collections.find((c) => c.ref === ref)
+  if (col?.color) return col.color
+  return collectionColor(collections.map((c) => c.ref), ref).bg
+}
+
 /** Stable per-user colour from the shared palette (hashed so it survives reordering). */
 export function userColor(username: string): string {
   let h = 0

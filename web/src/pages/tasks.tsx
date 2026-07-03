@@ -3,9 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import { caldav } from '@/api'
 import { collectionColor } from '@/lib/colors'
 import { parseCalDate, fmtDateShort } from '@/lib/dates'
+import { canonicalTaskOrder } from '@/lib/todoOrder'
 import { isBefore, startOfDay, isToday } from 'date-fns'
 import { Circle, ListTodo, Sun } from 'lucide-react'
-import type { Collection, Todo } from '@/types'
+import type { Collection, Section, Todo } from '@/types'
 import { PageBar } from '@/components/layout/PageBar'
 
 export function TasksPage() {
@@ -27,21 +28,23 @@ export function TasksPage() {
     })),
   })
 
+  const sectionQueries = useQueries({
+    queries: visible.map((c) => ({
+      queryKey: ['sections', c.ref],
+      queryFn:  () => caldav.getSections(c.ref),
+      staleTime: 60_000,
+    })),
+  })
+
   const projects = visible.map((col, i) => {
     const color = col.color ?? collectionColor(names, col.ref).bg
     const todos: Todo[] = (todoQueries[i]?.data ?? [])
+    const sections: Section[] = (sectionQueries[i]?.data ?? [])
 
-    const active = todos
-      .filter((t) => t.status !== 'COMPLETED' && t.status !== 'CANCELLED')
-      .sort((a, b) => {
-        if (!a.due && !b.due) return 0
-        if (!a.due) return 1
-        if (!b.due) return -1
-        return a.due.localeCompare(b.due)
-      })
-      .slice(0, 5)
+    // Same order as the project's own task list (sections + manual sort).
+    const ordered = canonicalTaskOrder(todos, sections)
 
-    return { col, color, active, total: todos.filter((t) => t.status !== 'COMPLETED' && t.status !== 'CANCELLED').length }
+    return { col, color, active: ordered.slice(0, 5), total: ordered.length }
   })
 
   return (
@@ -157,7 +160,7 @@ function ProjectCard({ col, color, active, total, now, onNavigate }: CardProps) 
                 key={todo.uid}
                 style={{
                   display: 'flex',
-                  alignItems: 'flex-start',
+                  alignItems: 'center',
                   gap: 9,
                   padding: '7px 14px',
                   borderTop: i > 0 ? '1px solid var(--border)' : 'none',
@@ -168,7 +171,6 @@ function ProjectCard({ col, color, active, total, now, onNavigate }: CardProps) 
                     width: 14,
                     height: 14,
                     flexShrink: 0,
-                    marginTop: 2,
                     color: overdue ? 'var(--destructive)' : `${color}99`,
                   }}
                 />

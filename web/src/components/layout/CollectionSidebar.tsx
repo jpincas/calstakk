@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { Eye, EyeOff, Crosshair, User, Moon, Sun, Inbox, CalendarDays, ListTodo, Users, LogOut, Plus, Hourglass, Tag, Settings, Link2 } from 'lucide-react'
+import { Eye, EyeOff, Crosshair, User, Moon, Sun, Inbox, CalendarDays, ListTodo, Users, LogOut, Plus, Hourglass, Tag, Settings, Link2, LayoutDashboard } from 'lucide-react'
 import { useDroppable } from '@dnd-kit/core'
 import { toast } from 'sonner'
 import type { Collection, Me, ViewMode } from '@/types'
@@ -32,6 +32,7 @@ type NavItem = {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  { mode: 'home',     icon: LayoutDashboard, label: 'Home',  path: '/home',     color: '#F43F5E' },
   { mode: 'inbox',    icon: Inbox,        label: 'Inbox',    path: '/inbox',    color: '#3B82F6' },
   { mode: 'today',    icon: Sun,          label: 'Today',    path: '/today',    color: '#F59E0B' },
   { mode: 'tasks',    icon: ListTodo,     label: 'Tasks',    path: '/tasks',    color: '#10B981' },

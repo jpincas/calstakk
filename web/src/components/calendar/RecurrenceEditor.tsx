@@ -1,4 +1,5 @@
 import { formToRrule, rruleSummary, type RecurrenceForm } from '@/lib/recur'
+import { DateInput } from '@/components/DateInput'
 
 interface Props {
   /** null = doesn't repeat. */
@@ -181,11 +182,10 @@ export function RecurrenceEditor({ value, unsupportedRule, allDay, accent, disab
               <option value="count">after</option>
             </select>
             {value.ends.type === 'until' && (
-              <input
-                type="date"
+              <DateInput
                 value={value.ends.date}
                 disabled={disabled}
-                onChange={(e) => onChange({ ...value, ends: { type: 'until', date: e.target.value } })}
+                onChange={(date) => onChange({ ...value, ends: { type: 'until', date } })}
                 style={selectStyle}
               />
             )}

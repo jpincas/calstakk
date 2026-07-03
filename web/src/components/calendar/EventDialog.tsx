@@ -3,12 +3,13 @@ import { format } from 'date-fns'
 import {
   AlignLeft, Bell, CheckCircle2, Clock, Link, MapPin, Repeat, Tag, Trash2, X,
 } from 'lucide-react'
-import { collectionColor } from '@/lib/colors'
+import { displayColor } from '@/lib/colors'
 import {
   rruleToForm, formToRrule, toICalString, shiftSeries, scheduleChanged, hasCustomisationsFrom,
   type Occurrence, type RecurrenceForm, type SeriesEdits,
 } from '@/lib/recur'
 import type { Collection, EventFields } from '@/types'
+import { DateInput, TimeInput } from '@/components/DateInput'
 import { RecurrenceEditor } from './RecurrenceEditor'
 import { ScopeDialog, type EditScope } from './ScopeDialog'
 import { useEventMutations } from './useEventMutations'
@@ -161,8 +162,7 @@ export function EventDialog({
     mutations.saveFuture.isPending ||
     mutations.deleteSeries.isPending || mutations.deleteOccurrence.isPending || mutations.deleteFuture.isPending
 
-  const names = collections.map((c) => c.ref)
-  const accent = collectionColor(names, form.col)
+  const accent = { bg: displayColor(collections, form.col) }
   const set = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }))
 
   useEffect(() => {
@@ -501,35 +501,35 @@ export function EventDialog({
             <Clock style={rowIcon} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-                <input
-                  type="date" className="evd-input" style={{ width: 'auto' }}
+                <DateInput
+                  className="evd-input"
                   value={form.startDate} disabled={readOnly}
-                  onChange={(e) => {
+                  onChange={(startDate) => {
                     // Keep the end date in step when it would fall before the start.
-                    const patch: Partial<FormState> = { startDate: e.target.value }
-                    if (e.target.value > form.endDate) patch.endDate = e.target.value
+                    const patch: Partial<FormState> = { startDate }
+                    if (startDate > form.endDate) patch.endDate = startDate
                     set(patch)
                   }}
                 />
                 {!form.allDay && (
-                  <input
-                    type="time" className="evd-input" style={{ width: 'auto' }}
+                  <TimeInput
+                    className="evd-input"
                     value={form.startTime} disabled={readOnly}
-                    onChange={(e) => set({ startTime: e.target.value })}
+                    onChange={(startTime) => set({ startTime })}
                   />
                 )}
                 <span style={{ fontSize: 14.5, color: 'var(--muted-foreground)' }}>to</span>
                 {!form.allDay && (
-                  <input
-                    type="time" className="evd-input" style={{ width: 'auto' }}
+                  <TimeInput
+                    className="evd-input"
                     value={form.endTime} disabled={readOnly}
-                    onChange={(e) => set({ endTime: e.target.value })}
+                    onChange={(endTime) => set({ endTime })}
                   />
                 )}
-                <input
-                  type="date" className="evd-input" style={{ width: 'auto' }}
+                <DateInput
+                  className="evd-input"
                   value={form.endDate} disabled={readOnly}
-                  onChange={(e) => set({ endDate: e.target.value })}
+                  onChange={(endDate) => set({ endDate })}
                 />
                 <button type="button" disabled={readOnly} onClick={() => set({ allDay: !form.allDay })} style={pill(form.allDay)}>
                   All day

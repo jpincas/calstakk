@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { DateInput } from '@/components/DateInput'
 
 interface Props {
   collection: string
@@ -120,7 +121,7 @@ export function NewTaskDialog({ collection, accentColor, open, onOpenChange }: P
           <div style={{ display: 'flex', gap: 10 }}>
             <div style={{ flex: 1 }}>
               <span style={labelStyle}>Due</span>
-              <input type="date" value={form.due} onChange={(e) => setForm({ ...form, due: e.target.value })} style={inputStyle} />
+              <DateInput value={form.due} onChange={(due) => setForm({ ...form, due })} style={inputStyle} wrapperStyle={{ width: '100%' }} />
             </div>
             <div style={{ flex: 1 }}>
               <span style={labelStyle}>Status</span>
