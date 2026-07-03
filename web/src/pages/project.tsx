@@ -280,11 +280,6 @@ export function ProjectPage() {
 
   // ── Pane renderers ────────────────────────────────────────────────────────
 
-  // Board mode needs the full page width: force the tabbed (single-pane)
-  // layout so the board isn't squeezed into a half-width pane; events stay
-  // one tab away.
-  const tabbed = isNarrow || view === 'board'
-
   const TasksPane = (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
       <div style={{ flex: 1, overflowY: view === 'board' ? 'hidden' : 'auto', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -301,7 +296,7 @@ export function ProjectPage() {
         flexDirection: 'column',
         overflow: 'hidden',
         minWidth: 0,
-        borderLeft: tabbed ? 'none' : '1px solid var(--border)',
+        borderLeft: isNarrow ? 'none' : '1px solid var(--border)',
       }}
     >
       {/* Event list */}
@@ -477,10 +472,7 @@ export function ProjectPage() {
         controls={
           <>
             <button
-              onClick={() => {
-                setTaskView(colName, view === 'list' ? 'board' : 'list')
-                setActiveTab('Tasks') // the board lives on the Tasks tab — surface it immediately
-              }}
+              onClick={() => setTaskView(colName, view === 'list' ? 'board' : 'list')}
               title={view === 'list' ? 'Board view' : 'List view'}
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -559,8 +551,8 @@ export function ProjectPage() {
         }
       />
 
-      {/* Tab bar: narrow layouts and board mode (board takes the full width) */}
-      {tabbed && (
+      {/* Narrow mode tab bar (list view only — the board owns the full width, no events pane) */}
+      {view !== 'board' && isNarrow && (
         <div
           style={{
             display: 'flex',
@@ -602,7 +594,9 @@ export function ProjectPage() {
           minHeight: 0,
         }}
       >
-        {tabbed ? (
+        {view === 'board' ? (
+          TasksPane
+        ) : isNarrow ? (
           activeTab === 'Tasks' ? TasksPane : EventsPane
         ) : (
           <>
