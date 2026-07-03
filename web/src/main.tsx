@@ -9,6 +9,8 @@ import { TodosPage } from '@/pages/todos'
 import { TodayPage } from '@/pages/today'
 import { ProjectPage } from '@/pages/project'
 import { TasksPage } from '@/pages/tasks'
+import { WaitingPage } from '@/pages/waiting'
+import { TagPage } from '@/pages/tag'
 import { LoginPage } from '@/pages/login'
 import { UsersPage } from '@/pages/users'
 import { CalDAVError } from '@/api'
@@ -49,6 +51,8 @@ createRoot(document.getElementById('root')!).render(
             <Route path="today"       element={<TodayPage />} />
             <Route path="inbox"       element={<TodosPage />} />
             <Route path="tasks"       element={<TasksPage />} />
+            <Route path="waiting"     element={<WaitingPage />} />
+            <Route path="tag/:tag"    element={<TagPage />} />
             <Route path="calendar"    element={<CalendarPage />} />
             <Route path="users"       element={<UsersPage />} />
             <Route path=":collection" element={<ProjectPage />} />

@@ -3,7 +3,7 @@ import {
   escapeIcal, unescapeIcal, extractComponents, splitSubComponents,
   parseComponentProps, dtLine, toICalDateTime, unfoldLines,
 } from '../ical'
-import { parseEventResource, buildEventIcs } from '../client'
+import { parseEventResource, buildEventIcs, buildTodo, buildTodoIcs } from '../client'
 import type { CalEvent } from '@/types'
 
 function ics(...componentLines: string[]): string {
@@ -269,5 +269,40 @@ describe('round-trip fidelity', () => {
     expect(lines).toContain('RECURRENCE-ID:20260713T090000Z')
     expect(lines.filter((l) => l.startsWith('RRULE'))).toHaveLength(1)
     expect(lines.filter((l) => l === 'BEGIN:VEVENT')).toHaveLength(2)
+  })
+})
+
+// ── VTODO relations ───────────────────────────────────────────────────────────
+
+describe('VTODO RELATED-TO round-trip', () => {
+  it('distinguishes DEPENDS-ON relations from plain (parent) ones', () => {
+    const block = [
+      'BEGIN:VTODO',
+      'UID:t1',
+      'SUMMARY:Blocked task',
+      'RELATED-TO:parent-uid',
+      'RELATED-TO;RELTYPE=DEPENDS-ON:blocker-uid',
+      'END:VTODO',
+    ].join('\r\n')
+    const todo = buildTodo(block, '/calendars/u/c')
+    expect(todo.related_to).toBe('parent-uid')
+    expect(todo.depends_on).toBe('blocker-uid')
+
+    const out = contentLines(buildTodoIcs(todo))
+    expect(out).toContain('RELATED-TO:parent-uid')
+    expect(out).toContain('RELATED-TO;RELTYPE=DEPENDS-ON:blocker-uid')
+  })
+
+  it('parses an explicit RELTYPE=PARENT as a plain relation', () => {
+    const block = [
+      'BEGIN:VTODO',
+      'UID:t2',
+      'SUMMARY:Subtask',
+      'RELATED-TO;RELTYPE=PARENT:parent-uid',
+      'END:VTODO',
+    ].join('\r\n')
+    const todo = buildTodo(block, '/calendars/u/c')
+    expect(todo.related_to).toBe('parent-uid')
+    expect(todo.depends_on).toBeUndefined()
   })
 })

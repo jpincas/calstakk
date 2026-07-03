@@ -33,10 +33,18 @@ export interface TaskListCore {
   sectionedTasks: Record<string, Todo[]>
   /** The todo being dragged, for view-specific DragOverlay ghosts (null for section drags). */
   activeDragTodo: Todo | null
+  /** The still-open todo `todo` waits on (via depends_on), if any — undefined once it completes. */
+  blockerFor: (todo: Todo) => Todo | undefined
+  /** The bucket a todo renders in: 'ungrouped' or a valid section id. */
+  bucketOf: (todo: Todo) => string
   // Task operations
   toggle: (todo: Todo) => void
-  /** Create a task inline; the hook owns the uid so new tasks keep their creation order. */
-  createInlineTodo: (summary: string, sectionId?: string) => void
+  /**
+   * Create a task inline; the hook owns the uid (returned) so new tasks keep
+   * their creation order. With afterUid the task is inserted directly below
+   * that task (same bucket, whole bucket reindexed).
+   */
+  createInlineTodo: (summary: string, sectionId?: string, afterUid?: string) => string
   updateTitle: (todo: Todo, newSummary: string) => void
   /** Move one or more tasks to another collection (single optimistic patch + toast). */
   moveToCollection: (todos: Todo[], to: string) => void
@@ -112,6 +120,14 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
   const activeTodos = optimisticActive ?? computedActive
   const completed = useMemo(() => todos.filter(t => t.status === 'COMPLETED'), [todos])
 
+  const byUid = useMemo(() => new Map(todos.map(t => [t.uid, t])), [todos])
+  const blockerFor = useCallback((todo: Todo): Todo | undefined => {
+    if (!todo.depends_on) return undefined
+    const blocker = byUid.get(todo.depends_on)
+    if (!blocker || blocker.status === 'COMPLETED' || blocker.status === 'CANCELLED') return undefined
+    return blocker
+  }, [byUid])
+
   const validSectionIds = useMemo(() => new Set(sections.map(s => s.id)), [sections])
 
   const getTaskBucket = useCallback((todo: Todo): string =>
@@ -156,6 +172,26 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
           { uid, summary, status: 'NEEDS-ACTION', section_id, href: '' },
         ]),
       ],
+    }),
+  })
+
+  /** Insert-below create: the new task plus the bucket reindex land in one optimistic patch. */
+  const insertAfterMut = useMutation({
+    mutationFn: ({ create, reorder }: { create: Omit<Todo, 'href'> & { uid: string; summary: string }; reorder: Todo[] }) =>
+      Promise.all([
+        caldav.createTodo(collection, create),
+        ...reorder.map((t) => caldav.updateTodo(collection, t)),
+      ]),
+    ...withOptimism<{ create: Omit<Todo, 'href'> & { uid: string; summary: string }; reorder: Todo[] }>(qc, {
+      patches: ({ create, reorder }) => {
+        const orders = new Map(reorder.map((t) => [t.uid, t.x_sort_order]))
+        return [
+          patchList<Todo>(['todos', collection], (todos) => [
+            ...todos.map((t) => (orders.has(t.uid) ? { ...t, x_sort_order: orders.get(t.uid) } : t)),
+            { ...create, href: '' },
+          ]),
+        ]
+      },
     }),
   })
 
@@ -401,10 +437,33 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
 
   // ── Public surface ────────────────────────────────────────────────────────
 
-  const createInlineTodo = (summary: string, sectionId?: string) => {
+  const createInlineTodo = (summary: string, sectionId?: string, afterUid?: string): string => {
     const uid = crypto.randomUUID()
     setInlineCreatedUids(prev => [...prev, uid])
-    saveInlineNew.mutate({ uid, summary, section_id: sectionId })
+    const curActive = optimisticActive ?? computedActive
+    const after = afterUid ? curActive.find(t => t.uid === afterUid) : undefined
+    if (!after) {
+      saveInlineNew.mutate({ uid, summary, section_id: sectionId })
+      return uid
+    }
+    // Insert directly below `after`: reindex its whole bucket so every member
+    // carries an explicit x_sort_order and the position is unambiguous.
+    const bucketId = getTaskBucket(after)
+    const targetSectionId = bucketId === 'ungrouped' ? undefined : bucketId
+    const bucket = curActive.filter(t => getTaskBucket(t) === bucketId)
+    const idx = bucket.findIndex(t => t.uid === after.uid)
+    const created: Omit<Todo, 'href'> & { uid: string; summary: string } = {
+      uid, summary, status: 'NEEDS-ACTION', section_id: targetSectionId,
+    }
+    const newBucket: (Todo | typeof created)[] = [...bucket.slice(0, idx + 1), created, ...bucket.slice(idx + 1)]
+    const reorder: Todo[] = []
+    newBucket.forEach((t, i) => {
+      const order = (i + 1) * 1000
+      if (t.uid === uid) created.x_sort_order = order
+      else if (t.x_sort_order !== order) reorder.push({ ...(t as Todo), x_sort_order: order })
+    })
+    insertAfterMut.mutate({ create: created, reorder })
+    return uid
   }
 
   const activeDragTodo = activeDragId
@@ -422,7 +481,10 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
     ungroupedTasks,
     sectionedTasks,
     activeDragTodo,
-    toggle: (todo) => toggleMut.mutate(todo),
+    blockerFor,
+    bucketOf: getTaskBucket,
+    // Waiting tasks can't be completed from the row (the checkbox is inert too).
+    toggle: (todo) => { if (!blockerFor(todo)) toggleMut.mutate(todo) },
     createInlineTodo,
     updateTitle: (todo, newSummary) => updateTitleMut.mutate({ todo, newSummary }),
     moveToCollection: (todos, to) => moveTodosMut.mutate({ todos, to }),

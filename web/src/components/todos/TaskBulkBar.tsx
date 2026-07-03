@@ -13,6 +13,7 @@ import { caldav } from '@/api'
 import { withOptimism, patchList } from '@/lib/optimistic'
 import { useTaskSelectionStore } from '@/state/selection'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { PageBarIconButton } from '@/components/layout/PageBar'
 import type { Todo, Collection } from '@/types'
 
 export interface TaskBulkBarProps {
@@ -113,24 +114,11 @@ export function TaskBulkBar({ collection, readOnly = false, colored = false }: T
   const targets = collections.filter((c) => c.ref !== collection && c.ref !== 'inbox' && c.myAccess !== 'read')
 
   const fg = colored ? 'rgba(255,255,255,0.85)' : 'var(--muted-foreground)'
-  const border = colored ? '1px solid rgba(255,255,255,0.35)' : '1px solid var(--border)'
 
   const iconBtn = (onClick: () => void, title: string, icon: React.ReactNode, danger = false) => (
-    <button
-      key={title}
-      onClick={onClick}
-      title={title}
-      style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        width: 36, height: 36, borderRadius: 7,
-        border: danger ? 'none' : border,
-        background: danger ? 'var(--destructive)' : 'transparent',
-        color: danger ? '#fff' : fg,
-        cursor: 'pointer',
-      }}
-    >
+    <PageBarIconButton key={title} onClick={onClick} title={title} colored={colored} danger={danger}>
       {icon}
-    </button>
+    </PageBarIconButton>
   )
 
   return (

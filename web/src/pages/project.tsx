@@ -5,7 +5,7 @@ import { caldav } from '@/api'
 import { withOptimism, patchList } from '@/lib/optimistic'
 import { calendarLinkFor, fmtTime } from '@/lib/dates'
 import { expandEvent, type Occurrence } from '@/lib/recur'
-import { collectionColor, SETTING_COLORS } from '@/lib/colors'
+import { collectionColor } from '@/lib/colors'
 import { useCollectionStore } from '@/state/collection'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -19,11 +19,12 @@ import {
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
 import { Settings, Plus, Share2, Eye, Columns3, LayoutList } from 'lucide-react'
-import { PageBar } from '@/components/layout/PageBar'
+import { PageBar, PageBarIconButton } from '@/components/layout/PageBar'
 import { TasksView } from '@/components/todos/TasksView'
 import { TaskBulkBar } from '@/components/todos/TaskBulkBar'
 import { ShareDialog } from '@/components/ShareDialog'
 import { NewTaskDialog } from '@/components/NewTaskDialog'
+import { ProjectSettingsDialog } from '@/components/ProjectSettingsDialog'
 import {
   format,
   isToday,
@@ -136,12 +137,6 @@ export function ProjectPage() {
   const activeCount = useMemo(() => todos.filter(t => t.status !== 'COMPLETED' && t.status !== 'CANCELLED').length, [todos])
   const completedCount = useMemo(() => todos.filter(t => t.status === 'COMPLETED').length, [todos])
 
-  const existingGroups = useMemo(() => {
-    const groups = new Set<string>()
-    collections.forEach((c) => { if (c.group) groups.add(c.group) })
-    return Array.from(groups)
-  }, [collections])
-
   const eventBuckets = useMemo(() => {
     const today = new Date()
     const bucketed: Record<Bucket, Occurrence[]> = {
@@ -182,8 +177,6 @@ export function ProjectPage() {
   const [activeTab, setActiveTab] = useState<'Tasks' | 'Events'>('Tasks')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
-  const [settingColor, setSettingColor] = useState('')
-  const [settingGroup, setSettingGroup] = useState('')
 
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -197,13 +190,6 @@ export function ProjectPage() {
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
-
-  // Initialise settings edit state from the collection, then open the modal.
-  const openSettings = () => {
-    setSettingColor(col?.color ?? '')
-    setSettingGroup(col?.group ?? '')
-    setSettingsOpen(true)
-  }
 
   // ── Mutations ─────────────────────────────────────────────────────────────
 
@@ -236,26 +222,6 @@ export function ProjectPage() {
           cols.map((c) => (c.ref === colName ? { ...c, display_name: name } : c))),
       ],
       sideEffects: () => setEditingName(false),
-    }),
-  })
-
-  const saveSettings = useMutation({
-    mutationFn: () =>
-      caldav.updateCollectionProps(colName!, {
-        color: settingColor || undefined,
-        group: settingGroup.trim() || null,
-      }),
-    ...withOptimism<void>(qc, {
-      patches: () => [
-        patchList<Collection>(['collections'], (cols) =>
-          cols.map((c) =>
-            c.ref === colName
-              ? { ...c, color: settingColor || undefined, group: settingGroup.trim() || undefined }
-              : c
-          )),
-      ],
-      sideEffects: () => setSettingsOpen(false),
-      onSuccess: () => toast.success('Settings saved'),
     }),
   })
 
@@ -473,51 +439,29 @@ export function ProjectPage() {
         controls={
           <>
             <TaskBulkBar collection={colName} readOnly={readOnly} colored />
-            <button
+            <PageBarIconButton
               onClick={() => setTaskView(colName, view === 'list' ? 'board' : 'list')}
               title={view === 'list' ? 'Board view' : 'List view'}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                width: 36, height: 36, borderRadius: 7,
-                border: '1px solid rgba(255,255,255,0.35)',
-                background: 'transparent', color: 'rgba(255,255,255,0.85)',
-                cursor: 'pointer',
-              }}
+              colored
             >
               {view === 'list'
                 ? <Columns3 style={{ width: 18, height: 18 }} />
                 : <LayoutList style={{ width: 18, height: 18 }} />}
-            </button>
+            </PageBarIconButton>
             {isOwner && col && (
-              <button
+              <PageBarIconButton
                 onClick={() => setShareOpen(true)}
                 title={col.sharedWith?.length ? `Shared with ${col.sharedWith.length}` : 'Share'}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 5,
-                  padding: '5px 10px', borderRadius: 7,
-                  border: '1px solid rgba(255,255,255,0.35)',
-                  background: 'transparent', color: 'rgba(255,255,255,0.85)',
-                  fontSize: 16, fontWeight: 600, cursor: 'pointer',
-                  height: 36,
-                }}
+                colored
               >
                 <Share2 style={{ width: 16, height: 16 }} />
                 {col.sharedWith && col.sharedWith.length > 0 ? col.sharedWith.length : null}
-              </button>
+              </PageBarIconButton>
             )}
             {isOwner && (
-            <button
-              onClick={openSettings}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                width: 36, height: 36, borderRadius: 7,
-                border: '1px solid rgba(255,255,255,0.35)',
-                background: 'transparent', color: 'rgba(255,255,255,0.85)',
-                cursor: 'pointer',
-              }}
-            >
-              <Settings style={{ width: 18, height: 18 }} />
-            </button>
+              <PageBarIconButton onClick={() => setSettingsOpen(true)} title="Project settings" colored>
+                <Settings style={{ width: 18, height: 18 }} />
+              </PageBarIconButton>
             )}
             {!readOnly && (
             <button
@@ -640,144 +584,8 @@ export function ProjectPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Settings modal */}
-      <Dialog open={settingsOpen} onOpenChange={(o) => !o && setSettingsOpen(false)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Project settings</DialogTitle>
-          </DialogHeader>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 20, paddingTop: 4 }}>
-            {/* Colour section */}
-            <div>
-              <p
-                style={{
-                  fontSize: 14,
-                  fontWeight: 700,
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                  color: 'var(--muted-foreground)',
-                  margin: '0 0 10px',
-                }}
-              >
-                Colour
-              </p>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(4, 28px)',
-                  gap: 8,
-                }}
-              >
-                {SETTING_COLORS.map((hex) => {
-                  const selected = settingColor === hex
-                  return (
-                    <button
-                      key={hex}
-                      onClick={() => setSettingColor(selected ? '' : hex)}
-                      style={{
-                        width: 28,
-                        height: 28,
-                        borderRadius: '50%',
-                        border: 'none',
-                        background: hex,
-                        cursor: 'pointer',
-                        position: 'relative',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        outline: selected ? `3px solid ${hex}` : 'none',
-                        outlineOffset: 2,
-                        boxShadow: selected ? 'inset 0 0 0 2px rgba(255,255,255,0.5)' : 'none',
-                      }}
-                    >
-                      {selected && (
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 12 12"
-                          style={{ position: 'absolute' }}
-                        >
-                          <path
-                            d="M2 6l3 3 5-5"
-                            stroke="white"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            fill="none"
-                          />
-                        </svg>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
-              {!settingColor && (
-                <p style={{ fontSize: 14, color: 'var(--muted-foreground)', margin: '8px 0 0' }}>
-                  Using palette colour. Select a swatch to override.
-                </p>
-              )}
-            </div>
-
-            {/* Group section */}
-            <div>
-              <p
-                style={{
-                  fontSize: 14,
-                  fontWeight: 700,
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                  color: 'var(--muted-foreground)',
-                  margin: '0 0 10px',
-                }}
-              >
-                Group
-              </p>
-              {existingGroups.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-                  {existingGroups.map((g) => {
-                    const selected = settingGroup === g
-                    return (
-                      <button
-                        key={g}
-                        onClick={() => setSettingGroup(selected ? '' : g)}
-                        style={{
-                          padding: '3px 10px',
-                          borderRadius: 20,
-                          border: '1px solid var(--border)',
-                          background: selected ? color.bg : 'var(--accent)',
-                          color: selected ? '#fff' : 'var(--foreground)',
-                          fontSize: 16,
-                          fontWeight: selected ? 600 : 400,
-                          cursor: 'pointer',
-                          transition: 'background 100ms, color 100ms',
-                        }}
-                      >
-                        {g}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-              <Input
-                value={settingGroup}
-                onChange={(e) => setSettingGroup(e.target.value)}
-                placeholder="Group name — leave empty to remove"
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              onClick={() => saveSettings.mutate()}
-              disabled={saveSettings.isPending}
-              style={{ background: color.bg, color: '#fff', border: 'none' }}
-            >
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Settings modal — shared with the sidebar's right-click menu */}
+      <ProjectSettingsDialog collectionRef={colName} open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       {/* Share modal — owner only */}
       {isOwner && col && (

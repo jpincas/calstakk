@@ -21,6 +21,7 @@ const CreateTodoArgs = z.object({
   status: z.enum(['NEEDS-ACTION', 'IN-PROCESS', 'COMPLETED', 'CANCELLED']).optional(),
   priority: z.number().int().min(1).max(9).optional().describe('1 = highest, 9 = lowest'),
   related_to: z.string().optional().describe('uid of a parent todo (subtask relationship)'),
+  depends_on: z.string().optional().describe('uid of a todo this one waits on (RELATED-TO;RELTYPE=DEPENDS-ON); the todo shows as Waiting until that todo completes'),
   categories: z.array(z.string()).optional(),
   url: z.string().optional(),
   section_id: z.string().optional().describe('Section id from get_sections'),
@@ -37,6 +38,7 @@ const UpdateTodoArgs = z.object({
   status: z.enum(['NEEDS-ACTION', 'IN-PROCESS', 'COMPLETED', 'CANCELLED']).nullable().optional(),
   priority: z.number().int().min(1).max(9).nullable().optional().describe('1 = highest, 9 = lowest'),
   related_to: z.string().nullable().optional().describe('uid of a parent todo (subtask relationship)'),
+  depends_on: z.string().nullable().optional().describe('uid of a todo this one waits on (RELATED-TO;RELTYPE=DEPENDS-ON); null clears the dependency'),
   categories: z.array(z.string()).nullable().optional(),
   url: z.string().nullable().optional(),
   section_id: z.string().nullable().optional().describe('Section id from get_sections; null ungroups the todo'),
@@ -95,6 +97,7 @@ export function registerTodoTools(server: McpServer, ctx: Ctx): void {
           status: args.status,
           priority: args.priority,
           related_to: args.related_to,
+          depends_on: args.depends_on,
           categories: args.categories,
           url: args.url,
           section_id: args.section_id,
@@ -117,7 +120,7 @@ export function registerTodoTools(server: McpServer, ctx: Ctx): void {
         const next: Todo = { ...current }
         const keys = [
           'summary', 'description', 'due', 'status', 'priority',
-          'related_to', 'categories', 'url', 'section_id',
+          'related_to', 'depends_on', 'categories', 'url', 'section_id',
         ] as const
         let changed = false
         for (const k of keys) {

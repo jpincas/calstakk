@@ -229,7 +229,8 @@ export function TodayPage() {
                   </button>
 
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontSize: 17, fontWeight: 400, color: 'var(--foreground)', margin: 0 }}>
+                    {/* lineHeight matches the 16px circle (marginTop 1) — see TodoRow */}
+                    <p style={{ fontSize: 17, fontWeight: 400, lineHeight: '18px', color: 'var(--foreground)', margin: 0 }}>
                       {todo.summary}
                     </p>
                     {todo.description && (

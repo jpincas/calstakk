@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { caldav } from '@/api'
 import { withOptimism, patchList } from '@/lib/optimistic'
 import { Trash2, Link } from 'lucide-react'
@@ -60,7 +60,35 @@ export function TodoEditPanel({ todo, collection, accentColor, readOnly = false,
   const [url, setUrl] = useState(todo.url ?? '')
   const [categories, setCategories] = useState<string[]>(todo.categories ?? [])
   const [catInput, setCatInput] = useState('')
+  const [dependsOn, setDependsOn] = useState(todo.depends_on ?? '')
   const [confirmDelete, setConfirmDelete] = useState(false)
+
+  // Candidates for "Waiting on": open tasks in this collection, minus self
+  // and anything whose dependency chain already leads back here (no cycles).
+  const { data: colTodos = [] } = useQuery<Todo[]>({
+    queryKey: ['todos', collection],
+    queryFn: () => caldav.listTodos(collection),
+  })
+  const byUid = new Map(colTodos.map((t) => [t.uid, t]))
+  const leadsBackHere = (startUid: string): boolean => {
+    const seen = new Set<string>()
+    let cur: string | undefined = startUid
+    while (cur && !seen.has(cur)) {
+      if (cur === todo.uid) return true
+      seen.add(cur)
+      cur = byUid.get(cur)?.depends_on
+    }
+    return false
+  }
+  const dependencyCandidates = colTodos.filter((t) =>
+    t.uid !== todo.uid &&
+    t.status !== 'COMPLETED' && t.status !== 'CANCELLED' &&
+    !leadsBackHere(t.uid),
+  )
+  // A stale value (blocker since completed/deleted) still needs a visible option.
+  const staleDependency = dependsOn && !dependencyCandidates.some((t) => t.uid === dependsOn)
+    ? byUid.get(dependsOn)
+    : undefined
 
   const editedTodo = (): Todo => ({
     ...todo,
@@ -70,6 +98,7 @@ export function TodoEditPanel({ todo, collection, accentColor, readOnly = false,
     priority: priority || undefined,
     url: url.trim() || undefined,
     categories: categories.length ? categories : undefined,
+    depends_on: dependsOn || undefined,
   })
 
   const save = useMutation({
@@ -168,6 +197,25 @@ export function TodoEditPanel({ todo, collection, accentColor, readOnly = false,
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Waiting on — RELATED-TO;RELTYPE=DEPENDS-ON */}
+      <div>
+        <span style={labelStyle}>Waiting on</span>
+        <select
+          value={dependsOn}
+          onChange={(e) => setDependsOn(e.target.value)}
+          disabled={readOnly}
+          style={inputStyle}
+        >
+          <option value="">Nothing — task is active</option>
+          {staleDependency && (
+            <option value={staleDependency.uid}>{staleDependency.summary} (completed)</option>
+          )}
+          {dependencyCandidates.map((t) => (
+            <option key={t.uid} value={t.uid}>{t.summary}</option>
+          ))}
+        </select>
       </div>
 
       {/* URL */}

@@ -40,23 +40,26 @@ const cardChromeStyle: React.CSSProperties = {
 // Same sortable registration as the list's SortableTodoRow — the shared drag
 // handlers cannot tell the two views apart.
 
-function SortableBoardCard({ containerId, uid, readOnly, children }: {
+function SortableBoardCard({ containerId, uid, readOnly, editing, children }: {
   containerId: string
   uid: string
   readOnly: boolean
+  /** Drag must stay off while the card's title is being edited — text selection must not start a drag. */
+  editing: boolean
   children: React.ReactNode
 }) {
+  const dragDisabled = readOnly || editing
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: uid,
     data: { type: 'task', containerId },
-    disabled: readOnly,
+    disabled: dragDisabled,
   })
+  const handleProps = dragDisabled ? {} : { ...attributes, ...listeners }
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0 : 1 }}
-      {...attributes}
-      {...listeners}
+      {...handleProps}
     >
       {children}
     </div>
@@ -317,9 +320,10 @@ export function KanbanBoard({ core, accentColor }: KanbanBoardProps) {
   // ── Card rendering ────────────────────────────────────────────────────────
 
   const renderCard = (todo: Todo, containerId: string) => {
+    const rp = rowProps(todo)
     const card = (
       <div style={cardChromeStyle}>
-        <TodoRow {...rowProps(todo)} />
+        <TodoRow {...rp} />
         {panelOpenUid === todo.uid && (
           <TodoEditPanel
             todo={todo}
@@ -333,7 +337,7 @@ export function KanbanBoard({ core, accentColor }: KanbanBoardProps) {
     )
     return (
       <div key={todo.uid} tabIndex={-1} style={{ outline: 'none' }} onBlur={handleContainerBlur}>
-        <SortableBoardCard containerId={containerId} uid={todo.uid} readOnly={readOnly}>
+        <SortableBoardCard containerId={containerId} uid={todo.uid} readOnly={readOnly} editing={rp.isEditingTitle}>
           {readOnly ? card : (
             <TaskContextMenu
               collections={collections}

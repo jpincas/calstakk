@@ -5,7 +5,7 @@ import { caldav } from '@/api'
 import { collectionColor } from '@/lib/colors'
 import { useCollectionStore } from '@/state/collection'
 import { Plus, Inbox, Columns3, LayoutList } from 'lucide-react'
-import { PageBar } from '@/components/layout/PageBar'
+import { PageBar, PageBarIconButton } from '@/components/layout/PageBar'
 import { TasksView } from '@/components/todos/TasksView'
 import { TaskBulkBar } from '@/components/todos/TaskBulkBar'
 import { NewTaskDialog } from '@/components/NewTaskDialog'
@@ -50,21 +50,14 @@ export function TodosPage() {
         controls={
           <>
             <TaskBulkBar collection={collection} readOnly={readOnly} />
-            <button
+            <PageBarIconButton
               onClick={() => setTaskView(collection, view === 'list' ? 'board' : 'list')}
               title={view === 'list' ? 'Board view' : 'List view'}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                width: 36, height: 36, borderRadius: 7,
-                border: '1px solid var(--border)',
-                background: 'transparent', color: 'var(--muted-foreground)',
-                cursor: 'pointer',
-              }}
             >
               {view === 'list'
                 ? <Columns3 style={{ width: 18, height: 18 }} />
                 : <LayoutList style={{ width: 18, height: 18 }} />}
-            </button>
+            </PageBarIconButton>
             {!readOnly && (
               <button
                 onClick={() => setNewTaskOpen(true)}

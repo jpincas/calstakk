@@ -350,7 +350,7 @@ export class CalDAVClient {
     return extractCalendarData(xml).flatMap(({ ics }) => {
       const block = extractComponent(ics, 'VTODO')
       if (!block) return []
-      return [buildTodo(parseTodoProps(block), path)]
+      return [buildTodo(block, path)]
     })
   }
 
@@ -360,7 +360,7 @@ export class CalDAVClient {
     if (!res.ok) throw new CalDAVError(res.status, `GET todo failed: ${res.status}`)
     const block = extractComponent(await res.text(), 'VTODO')
     if (!block) throw new CalDAVError(0, 'No VTODO found')
-    return buildTodo(parseTodoProps(block), colPath, uid)
+    return buildTodo(block, colPath, uid)
   }
 
   async createTodo(
@@ -461,7 +461,7 @@ export class CalDAVClient {
           return event ? [event as T] : []
         }
         const block = extractComponent(ics, 'VTODO')
-        return block ? [buildTodo(parseTodoProps(block), path) as T] : []
+        return block ? [buildTodo(block, path) as T] : []
       })
       return { syncToken: token, changed: items, deleted: [] }
     }
@@ -499,7 +499,7 @@ export class CalDAVClient {
         if (event) changed.push(event as T)
       } else {
         const block = extractComponent(calData, 'VTODO')
-        if (block) changed.push(buildTodo(parseTodoProps(block), path) as T)
+        if (block) changed.push(buildTodo(block, path) as T)
       }
     }
 
@@ -840,11 +840,18 @@ export function parseEventResource(
   }
 }
 
-function buildTodo(
-  p: Record<string, string | string[]>,
+/** Exported for unit tests; not part of the UI-facing API surface. */
+export function buildTodo(
+  block: string,
   collectionHref: string,
   fallbackUid?: string,
 ): Todo {
+  const p = parseTodoProps(block)
+  // RELATED-TO needs its params: RELTYPE=DEPENDS-ON (RFC 9253) marks a
+  // wait-on dependency, anything else (default PARENT) is a plain relation.
+  const relations = propAll(parseComponentProps(splitSubComponents(block).propLines), 'RELATED-TO')
+  const dependsOn = relations.find((r) => /RELTYPE=DEPENDS-ON/i.test(r.params))
+  const parent = relations.find((r) => !/RELTYPE=DEPENDS-ON/i.test(r.params))
   const uid = first(p['UID']) ?? fallbackUid ?? ''
   return {
     uid,
@@ -853,7 +860,8 @@ function buildTodo(
     due: first(p['DUE']) ?? undefined,
     status: first(p['STATUS']) ?? undefined,
     priority: first(p['PRIORITY']) ? parseInt(first(p['PRIORITY'])!) : undefined,
-    related_to: first(p['RELATED-TO']) ?? undefined,
+    related_to: parent ? unescapeIcal(parent.value) : undefined,
+    depends_on: dependsOn ? unescapeIcal(dependsOn.value) : undefined,
     categories: all(p['CATEGORIES']).filter(Boolean),
     url: first(p['URL']) ?? undefined,
     x_sort_order: first(p['X-SORT-ORDER']) ? parseInt(first(p['X-SORT-ORDER'])!) : undefined,
@@ -951,7 +959,8 @@ function parseTodoProps(block: string): Record<string, string | string[]> {
   return parseICalProps(splitSubComponents(block).propLines.join('\n'))
 }
 
-function buildTodoIcs(todo: Partial<Todo> & { uid: string; summary: string }): string {
+/** Exported for unit tests; not part of the UI-facing API surface. */
+export function buildTodoIcs(todo: Partial<Todo> & { uid: string; summary: string }): string {
   const lines = [
     'BEGIN:VTODO',
     `UID:${todo.uid}`,
@@ -963,6 +972,7 @@ function buildTodoIcs(todo: Partial<Todo> & { uid: string; summary: string }): s
   if (todo.status) lines.push(`STATUS:${todo.status.toUpperCase()}`)
   if (todo.priority !== undefined) lines.push(`PRIORITY:${todo.priority}`)
   if (todo.related_to) lines.push(`RELATED-TO:${todo.related_to}`)
+  if (todo.depends_on) lines.push(`RELATED-TO;RELTYPE=DEPENDS-ON:${todo.depends_on}`)
   if (todo.url) lines.push(`URL:${todo.url}`)
   if (todo.categories?.length) todo.categories.forEach((c) => lines.push(`CATEGORIES:${escapeIcal(c)}`))
   if (todo.x_sort_order !== undefined) lines.push(`X-SORT-ORDER:${todo.x_sort_order}`)

@@ -121,6 +121,8 @@ export interface Todo {
   status?: string
   priority?: number
   related_to?: string
+  /** Uid of a todo this one waits on (RELATED-TO;RELTYPE=DEPENDS-ON, RFC 9253). */
+  depends_on?: string
   categories?: string[]
   url?: string
   x_sort_order?: number
@@ -135,4 +137,4 @@ export interface Section {
 }
 
 export type DataType = 'calendar' | 'todos'
-export type ViewMode = 'inbox' | 'today' | 'tasks' | 'calendar'
+export type ViewMode = 'inbox' | 'today' | 'tasks' | 'waiting' | 'calendar'

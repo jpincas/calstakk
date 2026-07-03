@@ -4,7 +4,7 @@
  * Pure render layer over the shared TaskListCore (see useTaskListCore).
  */
 
-import { useState, useRef, useMemo } from 'react'
+import { useState, useRef, useMemo, useEffect } from 'react'
 import { CheckCircle2, ChevronDown, ChevronUp, Plus, Trash2, Check, X } from 'lucide-react'
 import { DragOverlay } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
@@ -88,6 +88,8 @@ interface SectionHeaderProps {
   readOnly: boolean
   isFirst: boolean
   isLast: boolean
+  /** False for the very first thing in the list — no rule against empty space above. */
+  showRule: boolean
   onMoveUp: () => void
   onMoveDown: () => void
   onDelete: () => void
@@ -101,7 +103,7 @@ interface SectionHeaderProps {
 }
 
 function SectionHeader({
-  section, taskCount, readOnly, isFirst, isLast,
+  section, taskCount, readOnly, isFirst, isLast, showRule,
   onMoveUp, onMoveDown, onDelete, onAdd,
   isEditing, editValue, onStartEdit, onEditChange, onEditCommit, onEditCancel,
 }: SectionHeaderProps) {
@@ -123,9 +125,9 @@ function SectionHeader({
     <div
       style={{
         display: 'flex', alignItems: 'center', gap: 4,
-        padding: '18px 10px 4px',
-        borderTop: '1px solid var(--border)',
-        marginTop: 6,
+        padding: showRule ? '18px 10px 4px' : '8px 10px 4px',
+        borderTop: showRule ? '1px solid var(--border)' : 'none',
+        marginTop: showRule ? 6 : 0,
         userSelect: 'none',
       }}
       onMouseEnter={() => setHovered(true)}
@@ -204,9 +206,11 @@ export function TaskList({ core, accentColor }: TaskListProps) {
   const selection = useTaskSelection(collection, orderedTodos)
   const { rowProps, panelOpenUid, closePanel, handleContainerBlur } = useRowEditing(core, accentColor, selection)
 
-  // ── Inline-add state (null | 'ungrouped' | sectionId) ─────────────────────
+  // ── Inline-add state ──────────────────────────────────────────────────────
+  // containerId is 'ungrouped' or a section id; afterUid pins the input row
+  // directly below a specific task (Enter-on-selected flow).
 
-  const [showInlineNew, setShowInlineNew] = useState<string | null>(null)
+  const [showInlineNew, setShowInlineNew] = useState<{ containerId: string; afterUid?: string } | null>(null)
   const [inlineNewValue, setInlineNewValue] = useState('')
   const inlineNewRef = useRef<HTMLInputElement>(null)
 
@@ -226,8 +230,10 @@ export function TaskList({ core, accentColor }: TaskListProps) {
   const commitInlineNew = () => {
     const trimmed = inlineNewValue.trim()
     if (!trimmed) { setShowInlineNew(null); setInlineNewValue(''); return }
-    const sectionId = (!showInlineNew || showInlineNew === 'ungrouped') ? undefined : showInlineNew
-    core.createInlineTodo(trimmed, sectionId)
+    const sectionId = (!showInlineNew || showInlineNew.containerId === 'ungrouped') ? undefined : showInlineNew.containerId
+    const newUid = core.createInlineTodo(trimmed, sectionId, showInlineNew?.afterUid)
+    // Chain below-insertions: the next commit lands under the task just created.
+    if (showInlineNew?.afterUid) setShowInlineNew({ ...showInlineNew, afterUid: newUid })
     setInlineNewValue('')
     // Keep input open for multi-add; Escape or blur-with-empty closes it
   }
@@ -245,9 +251,29 @@ export function TaskList({ core, accentColor }: TaskListProps) {
   const handleBlankAreaClick = () => {
     if (selection.hasSelection) { selection.clear(); return }
     if (readOnly) return
-    if (showInlineNew === 'ungrouped') inlineNewRef.current?.focus()
-    else { setShowInlineNew('ungrouped'); setInlineNewValue('') }
+    if (showInlineNew?.containerId === 'ungrouped' && !showInlineNew.afterUid) inlineNewRef.current?.focus()
+    else { setShowInlineNew({ containerId: 'ungrouped' }); setInlineNewValue('') }
   }
+
+  // Enter with exactly one task selected opens a new-task input directly
+  // beneath it, just like the ordinary inline-add flow.
+  useEffect(() => {
+    if (readOnly) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' || e.defaultPrevented) return
+      const el = e.target as HTMLElement | null
+      if (el?.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (selection.selectedTodos.length !== 1) return
+      const sel = selection.selectedTodos[0]
+      if (sel.status === 'COMPLETED' || sel.status === 'CANCELLED') return
+      e.preventDefault()
+      setShowInlineNew({ containerId: core.bucketOf(sel), afterUid: sel.uid })
+      setInlineNewValue('')
+      selection.clear()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [readOnly, selection, core])
 
   // ── Row helpers ───────────────────────────────────────────────────────────
 
@@ -284,6 +310,16 @@ export function TaskList({ core, accentColor }: TaskListProps) {
           onClose={closePanel}
         />
       )}
+      {showInlineNew?.afterUid === todo.uid && (
+        <InlineNewRow
+          value={inlineNewValue}
+          accentColor={accentColor}
+          inputRef={inlineNewRef}
+          onChange={setInlineNewValue}
+          onKeyDown={handleInlineNewKey}
+          onBlur={handleInlineNewBlur}
+        />
+      )}
     </div>
   )
 
@@ -305,7 +341,7 @@ export function TaskList({ core, accentColor }: TaskListProps) {
             tasks={ungroupedTasks}
             renderRow={(t) => renderTodoRow(t, 'ungrouped')}
           />
-          {showInlineNew === 'ungrouped' && (
+          {showInlineNew?.containerId === 'ungrouped' && !showInlineNew.afterUid && (
             <InlineNewRow
               value={inlineNewValue}
               accentColor={accentColor}
@@ -331,10 +367,11 @@ export function TaskList({ core, accentColor }: TaskListProps) {
                     readOnly={readOnly}
                     isFirst={idx === 0}
                     isLast={idx === sections.length - 1}
+                    showRule={idx > 0 || ungroupedTasks.length > 0 || showInlineNew?.containerId === 'ungrouped'}
                     onMoveUp={() => core.moveSectionUp(section.id)}
                     onMoveDown={() => core.moveSectionDown(section.id)}
                     onDelete={() => core.deleteSection(section.id)}
-                    onAdd={() => { setShowInlineNew(section.id); setInlineNewValue('') }}
+                    onAdd={() => { setShowInlineNew({ containerId: section.id }); setInlineNewValue('') }}
                     isEditing={editingSectionId === section.id}
                     editValue={sectionNameInput}
                     onStartEdit={() => { setEditingSectionId(section.id); setSectionNameInput(section.name) }}
@@ -348,7 +385,7 @@ export function TaskList({ core, accentColor }: TaskListProps) {
                   tasks={sectionedTasks[section.id] ?? []}
                   renderRow={(t) => renderTodoRow(t, section.id)}
                 />
-                {showInlineNew === section.id && (
+                {showInlineNew?.containerId === section.id && !showInlineNew.afterUid && (
                   <InlineNewRow
                     value={inlineNewValue}
                     accentColor={accentColor}

@@ -68,8 +68,8 @@ function vevent(fields: {
 
 function vtodo(fields: {
   uid?: string; summary: string; due?: string; status?: string
-  priority?: number; description?: string; categories?: string
-  section?: string; order?: number
+  priority?: number; description?: string; categories?: string[]
+  section?: string; order?: number; dependsOn?: string
 }): string {
   const u = fields.uid ?? uid()
   const s = stamp()
@@ -79,7 +79,8 @@ function vtodo(fields: {
   if (fields.status) lines.push(`STATUS:${fields.status}`)
   if (fields.priority !== undefined) lines.push(`PRIORITY:${fields.priority}`)
   if (fields.description) lines.push(`DESCRIPTION:${fields.description}`)
-  if (fields.categories) lines.push(`CATEGORIES:${fields.categories}`)
+  for (const cat of fields.categories ?? []) lines.push(`CATEGORIES:${cat}`)
+  if (fields.dependsOn) lines.push(`RELATED-TO;RELTYPE=DEPENDS-ON:${fields.dependsOn}`)
   if (fields.section) lines.push(`X-SECTION-ID:${fields.section}`)
   if (fields.order !== undefined) lines.push(`X-SORT-ORDER:${fields.order}`)
   lines.push('END:VTODO')
@@ -340,40 +341,42 @@ function rawVcal(lines: string[]): string {
 
 const TODOS: Array<{ collection: string; fields: Parameters<typeof vtodo>[0] }> = [
   // ── Work todos (sectioned: In review / This sprint / Backlog; two stay ungrouped) ──
-  { collection: 'work', fields: { summary: 'Write technical spec for auth refactor', priority: 1, due: date(3), description: 'Cover OAuth2 flows, token storage, and migration path', section: 'work-this-sprint', order: 1000 } },
-  { collection: 'work', fields: { summary: 'Review 3 open PRs in queue', priority: 2, due: date(1), section: 'work-in-review' } },
+  { collection: 'work', fields: { uid: 'seed-work-auth-spec', summary: 'Write technical spec for auth refactor', priority: 1, due: date(3), description: 'Cover OAuth2 flows, token storage, and migration path', section: 'work-this-sprint', order: 1000, categories: ['deep-work'] } },
+  { collection: 'work', fields: { summary: 'Review 3 open PRs in queue', priority: 2, due: date(1), section: 'work-in-review', categories: ['quick-win'] } },
   { collection: 'work', fields: { summary: 'Update API docs after v2 release', priority: 3, due: date(5), section: 'work-backlog' } },
-  { collection: 'work', fields: { summary: 'Set up staging environment for new service', priority: 2, due: date(7) } },
+  // Waiting on the auth spec (RELATED-TO;RELTYPE=DEPENDS-ON) — greyed until it completes
+  { collection: 'work', fields: { summary: 'Set up staging environment for new service', priority: 2, due: date(7), dependsOn: 'seed-work-auth-spec' } },
   { collection: 'work', fields: { summary: 'Fix flaky integration test in CI', priority: 1, due: date(2), section: 'work-this-sprint', order: 2000 } },
   { collection: 'work', fields: { summary: 'Migrate legacy config to env vars', priority: 5, section: 'work-backlog' } },
-  { collection: 'work', fields: { summary: 'Draft Q3 OKRs', priority: 2, due: date(4) } },
+  { collection: 'work', fields: { summary: 'Draft Q3 OKRs', priority: 2, due: date(4), categories: ['deep-work'] } },
   { collection: 'work', fields: { summary: 'Respond to security audit findings', priority: 1, due: date(1), description: 'Items 3, 7, 12 need immediate response', section: 'work-this-sprint', order: 3000 } },
   { collection: 'work', fields: { summary: 'Archive old S3 buckets', priority: 9, status: 'IN-PROCESS', section: 'work-backlog' } },
   { collection: 'work', fields: { summary: 'Onboard new engineer — access provisioning', status: 'COMPLETED', priority: 2 } },
   { collection: 'work', fields: { summary: 'Update runbook for deploy process', status: 'COMPLETED', priority: 3 } },
 
   // ── Learning todos ──
-  { collection: 'learning', fields: { summary: 'Finish Rust book chapters 10–12', priority: 2, due: date(10) } },
+  { collection: 'learning', fields: { summary: 'Finish Rust book chapters 10–12', priority: 2, due: date(10), categories: ['reading'] } },
   { collection: 'learning', fields: { summary: 'Complete distributed systems course on Coursera', priority: 3 } },
-  { collection: 'learning', fields: { summary: 'Read: "A Philosophy of Software Design"', priority: 5 } },
+  { collection: 'learning', fields: { summary: 'Read: "A Philosophy of Software Design"', priority: 5, categories: ['reading'] } },
   { collection: 'learning', fields: { summary: 'Build a toy key-value store in Go', priority: 4 } },
   { collection: 'learning', fields: { summary: 'Write blog post on CalDAV spec', priority: 6, description: 'Cover PROPFIND, REPORT, and sync-collection' } },
   { collection: 'learning', fields: { summary: 'Watch SICP lecture series (first 6 lectures)', status: 'IN-PROCESS', priority: 3 } },
   { collection: 'learning', fields: { summary: 'Finish TypeScript generics course', status: 'COMPLETED', priority: 2 } },
 
   // ── Personal todos ──
-  { collection: 'personal', fields: { summary: 'Book Edinburgh accommodation', priority: 1, due: date(2), description: 'Check Airbnb + hotels near Royal Mile' } },
+  { collection: 'personal', fields: { uid: 'seed-personal-edinburgh', summary: 'Book Edinburgh accommodation', priority: 1, due: date(2), description: 'Check Airbnb + hotels near Royal Mile' } },
+  { collection: 'personal', fields: { summary: 'Pack for Edinburgh trip', priority: 3, due: date(5), dependsOn: 'seed-personal-edinburgh' } },
   { collection: 'personal', fields: { summary: 'Renew passport', priority: 1, due: date(21), description: 'Need for October trip — allow 6 weeks' } },
-  { collection: 'personal', fields: { summary: 'Call Mum back', priority: 2, due: date(0) } },
-  { collection: 'personal', fields: { summary: 'Sort out contents insurance', priority: 3 } },
+  { collection: 'personal', fields: { summary: 'Call Mum back', priority: 2, due: date(0), categories: ['quick-win'] } },
+  { collection: 'personal', fields: { summary: 'Sort out contents insurance', priority: 3, categories: ['finance'] } },
   { collection: 'personal', fields: { summary: "Get Anna's birthday present", priority: 1, due: date(3) } },
   { collection: 'personal', fields: { summary: 'Cancel free trial before renewal', priority: 2, due: date(5) } },
-  { collection: 'personal', fields: { summary: 'Tax return', priority: 2, due: date(60) } },
+  { collection: 'personal', fields: { summary: 'Tax return', priority: 2, due: date(60), categories: ['finance'] } },
   { collection: 'personal', fields: { summary: 'Pick up dry cleaning', status: 'COMPLETED', priority: 4 } },
 
   // ── Health todos ──
   { collection: 'health', fields: { summary: 'Book physio appointment', priority: 2, due: date(2), description: 'Left shoulder — ongoing issue' } },
-  { collection: 'health', fields: { summary: 'Order repeat prescription', priority: 1, due: date(3) } },
+  { collection: 'health', fields: { summary: 'Order repeat prescription', priority: 1, due: date(3), categories: ['errand'] } },
   { collection: 'health', fields: { summary: 'Research half-marathon training plan', priority: 4 } },
   { collection: 'health', fields: { summary: 'Try new meal prep routine', priority: 6, status: 'IN-PROCESS' } },
   { collection: 'health', fields: { summary: 'Schedule eye test', priority: 3 } },
@@ -381,7 +384,7 @@ const TODOS: Array<{ collection: string; fields: Parameters<typeof vtodo>[0] }> 
   // ── Home todos (sectioned: This weekend / Someday; one stays ungrouped) ──
   { collection: 'home', fields: { summary: 'Fix leaking kitchen tap', priority: 1, due: date(1), section: 'home-weekend' } },
   { collection: 'home', fields: { summary: 'Clean oven before inspection', priority: 2, due: date(12) } },
-  { collection: 'home', fields: { summary: 'Buy new desk lamp', priority: 7, section: 'home-someday' } },
+  { collection: 'home', fields: { summary: 'Buy new desk lamp', priority: 7, section: 'home-someday', categories: ['errand'] } },
   { collection: 'home', fields: { summary: 'Sort recycling', priority: 8, due: date(1), section: 'home-weekend' } },
   { collection: 'home', fields: { summary: 'Repot the monstera', priority: 9, status: 'IN-PROCESS', section: 'home-someday' } },
 
@@ -390,7 +393,7 @@ const TODOS: Array<{ collection: string; fields: Parameters<typeof vtodo>[0] }> 
   { collection: 'capture', fields: { summary: 'Idea: CLI tool for CalDAV from terminal', priority: 6 } },
   { collection: 'capture', fields: { summary: 'Check if Deno Deploy supports WebSockets now', priority: 4 } },
   { collection: 'capture', fields: { summary: 'Ask Tom about the hire decision', priority: 3 } },
-  { collection: 'capture', fields: { summary: 'Follow up on freelance invoice #47', priority: 1, due: date(3) } },
+  { collection: 'capture', fields: { summary: 'Follow up on freelance invoice #47', priority: 1, due: date(3), categories: ['finance'] } },
 ]
 
 // ── Multi-user seed data ─────────────────────────────────────────────────────

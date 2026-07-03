@@ -1,14 +1,22 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { Eye, EyeOff, Crosshair, User, Moon, Sun, Inbox, CalendarDays, ListTodo, Users, LogOut, Plus } from 'lucide-react'
+import { Eye, EyeOff, Crosshair, User, Moon, Sun, Inbox, CalendarDays, ListTodo, Users, LogOut, Plus, Hourglass, Tag, Settings, Link2 } from 'lucide-react'
 import { useDroppable } from '@dnd-kit/core'
+import { toast } from 'sonner'
 import type { Collection, Me, ViewMode } from '@/types'
 import { useCollectionStore } from '@/state/collection'
 import { clearSession, hasSession } from '@/state/auth'
 import { collectionColor } from '@/lib/colors'
 import { UserAvatar } from '@/components/UserAvatar'
 import { NewCollectionDialog } from '@/components/NewCollectionDialog'
+import { ProjectSettingsDialog } from '@/components/ProjectSettingsDialog'
+import { useGlobalTodos } from '@/components/todos/useGlobalTodos'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem,
+} from '@/components/ui/context-menu'
 
 interface Props {
   collections: Collection[]
@@ -27,6 +35,7 @@ const NAV_ITEMS: NavItem[] = [
   { mode: 'inbox',    icon: Inbox,        label: 'Inbox',    path: '/inbox',    color: '#3B82F6' },
   { mode: 'today',    icon: Sun,          label: 'Today',    path: '/today',    color: '#F59E0B' },
   { mode: 'tasks',    icon: ListTodo,     label: 'Tasks',    path: '/tasks',    color: '#10B981' },
+  { mode: 'waiting',  icon: Hourglass,    label: 'Waiting',  path: '/waiting',  color: '#8B5CF6' },
   { mode: 'calendar', icon: CalendarDays, label: 'Calendar', path: '/calendar', color: '#6366F1' },
 ]
 
@@ -137,7 +146,10 @@ export function CollectionSidebar({ collections, me }: Props) {
   const location = useLocation()
   const qc = useQueryClient()
   const [newListOpen, setNewListOpen] = useState(false)
+  const [settingsFor, setSettingsFor] = useState<string | null>(null)
+  const [urlFor, setUrlFor] = useState<Collection | null>(null)
   const names = collections.map((c) => c.ref)
+  const { tags, waiting } = useGlobalTodos()
 
   const isCalendarMode = viewMode === 'calendar' || location.pathname.startsWith('/calendar')
   const visible = collections.filter((c) => c.ref !== 'capture')
@@ -177,9 +189,8 @@ export function CollectionSidebar({ collections, me }: Props) {
 
   const renderRow = (col: Collection) => {
     const color = collectionColor(names, col.ref)
-    return (
+    const row = (
       <CollectionRow
-        key={col.ref}
         col={col}
         dotColor={col.color ?? color.bg}
         isActive={activeCollection === col.ref}
@@ -190,6 +201,23 @@ export function CollectionSidebar({ collections, me }: Props) {
         onFocus={() => setFocusedCollection(col.ref)}
         onToggleHidden={() => toggleCollectionHidden(col.ref)}
       />
+    )
+    return (
+      <ContextMenu key={col.ref}>
+        <ContextMenuTrigger style={{ display: 'block' }}>{row}</ContextMenuTrigger>
+        <ContextMenuContent>
+          {col.myAccess === 'owner' && (
+            <ContextMenuItem onSelect={() => setSettingsFor(col.ref)}>
+              <Settings style={{ width: 13, height: 13, flexShrink: 0, opacity: 0.7 }} />
+              Settings…
+            </ContextMenuItem>
+          )}
+          <ContextMenuItem onSelect={() => setUrlFor(col)}>
+            <Link2 style={{ width: 13, height: 13, flexShrink: 0, opacity: 0.7 }} />
+            CalDAV URL…
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
     )
   }
 
@@ -209,6 +237,7 @@ export function CollectionSidebar({ collections, me }: Props) {
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon
             const isActive = activeMode === item.mode
+            const count = item.mode === 'waiting' ? waiting.length : 0
             return (
               <div
                 key={item.mode}
@@ -229,10 +258,43 @@ export function CollectionSidebar({ collections, me }: Props) {
                   style={{
                     fontSize: 17,
                     fontWeight: 500,
+                    flex: 1,
                     color: isActive ? 'var(--sidebar-primary)' : 'inherit',
                   }}
                 >
                   {item.label}
+                </span>
+                {count > 0 && (
+                  <span style={{ fontSize: 14, color: 'var(--muted-foreground)', flexShrink: 0 }}>
+                    {count}
+                  </span>
+                )}
+              </div>
+            )
+          })}
+
+          {/* Logical per-tag lists — every tag in use across active tasks */}
+          {tags.map((tag) => {
+            const path = `/tag/${encodeURIComponent(tag)}`
+            const isActive = location.pathname === path
+            return (
+              <div
+                key={tag}
+                className="sidebar-row"
+                data-active={isActive}
+                onClick={() => void navigate(path)}
+              >
+                <Tag
+                  style={{
+                    width: 14,
+                    height: 14,
+                    flexShrink: 0,
+                    color: isActive ? '#EC4899' : 'var(--ui-text-muted)',
+                  }}
+                  strokeWidth={isActive ? 2.3 : 2}
+                />
+                <span style={{ fontSize: 17, fontWeight: 500, color: isActive ? 'var(--sidebar-primary)' : 'inherit' }}>
+                  {tag}
                 </span>
               </div>
             )
@@ -301,6 +363,16 @@ export function CollectionSidebar({ collections, me }: Props) {
 
       <NewCollectionDialog open={newListOpen} onOpenChange={setNewListOpen} />
 
+      {settingsFor && (
+        <ProjectSettingsDialog
+          collectionRef={settingsFor}
+          open
+          onOpenChange={(open) => { if (!open) setSettingsFor(null) }}
+        />
+      )}
+
+      <CalDavUrlDialog col={urlFor} onClose={() => setUrlFor(null)} />
+
       {/* Footer: account + utilities (icons reveal on hover, like row actions) */}
       <AccountFooter
         me={me}
@@ -311,6 +383,46 @@ export function CollectionSidebar({ collections, me }: Props) {
         onToggleTheme={toggleTheme}
       />
     </aside>
+  )
+}
+
+/**
+ * The collection's address for third-party CalDAV clients (Apple Reminders,
+ * Tasks.org, Thunderbird…), with one-click copy.
+ */
+function CalDavUrlDialog({ col, onClose }: { col: Collection | null; onClose: () => void }) {
+  const url = col ? `${window.location.origin}${col.href}` : ''
+  return (
+    <Dialog open={!!col} onOpenChange={(o) => { if (!o) onClose() }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>CalDAV address{col ? ` — ${col.display_name}` : ''}</DialogTitle>
+        </DialogHeader>
+        <p style={{ fontSize: 15, color: 'var(--muted-foreground)', margin: 0, lineHeight: 1.5 }}>
+          Add this list to any CalDAV client using the URL below, signing in
+          with your CalStakk username and password.
+        </p>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <code
+            style={{
+              flex: 1, minWidth: 0, fontSize: 14, padding: '8px 10px', borderRadius: 6,
+              background: 'var(--muted)', color: 'var(--foreground)',
+              overflowX: 'auto', whiteSpace: 'nowrap',
+            }}
+          >
+            {url}
+          </code>
+          <Button
+            onClick={() => {
+              void navigator.clipboard.writeText(url)
+              toast.success('URL copied')
+            }}
+          >
+            Copy
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
