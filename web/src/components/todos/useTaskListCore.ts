@@ -38,8 +38,10 @@ export interface TaskListCore {
   /** Create a task inline; the hook owns the uid so new tasks keep their creation order. */
   createInlineTodo: (summary: string, sectionId?: string) => void
   updateTitle: (todo: Todo, newSummary: string) => void
-  moveToCollection: (todo: Todo, to: string) => void
-  setDue: (todo: Todo, due: string) => void
+  /** Move one or more tasks to another collection (single optimistic patch + toast). */
+  moveToCollection: (todos: Todo[], to: string) => void
+  /** Set the due date on one or more tasks. */
+  setDue: (todos: Todo[], due: string) => void
   // Section operations
   addSection: (name: string) => void
   renameSection: (id: string, name: string) => void
@@ -168,27 +170,40 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
     }),
   })
 
-  const moveTodoMut = useMutation({
-    mutationFn: ({ todo, to }: { todo: Todo; to: string }) => caldav.moveTodo(collection, to, todo),
-    ...withOptimism<{ todo: Todo; to: string }>(qc, {
-      patches: ({ todo, to }) => [
-        patchList<Todo>(['todos', collection], (todos) => todos.filter((t) => t.uid !== todo.uid)),
-        patchList<Todo>(['todos', to], (todos) => [
-          ...todos,
-          { ...todo, section_id: undefined, x_sort_order: undefined },
-        ]),
-      ],
-      onSuccess: () => toast.success('Task moved'),
+  const moveTodosMut = useMutation({
+    mutationFn: ({ todos: items, to }: { todos: Todo[]; to: string }) =>
+      Promise.all(items.map((t) => caldav.moveTodo(collection, to, t))),
+    ...withOptimism<{ todos: Todo[]; to: string }>(qc, {
+      patches: ({ todos: items, to }) => {
+        const ids = new Set(items.map((t) => t.uid))
+        return [
+          patchList<Todo>(['todos', collection], (ts) => ts.filter((t) => !ids.has(t.uid))),
+          patchList<Todo>(['todos', to], (ts) => [
+            ...ts,
+            ...items.map((t) => ({ ...t, section_id: undefined, x_sort_order: undefined })),
+          ]),
+        ]
+      },
+      onSuccess: (_d, { todos: items }) =>
+        toast.success(items.length === 1 ? 'Task moved' : `${items.length} tasks moved`),
     }),
   })
 
   const setDueMut = useMutation({
-    mutationFn: ({ todo, due }: { todo: Todo; due: string }) => caldav.updateTodo(collection, { ...todo, due }),
-    ...withOptimism<{ todo: Todo; due: string }>(qc, {
-      patches: ({ todo, due }) => [
-        patchList<Todo>(['todos', collection], (todos) =>
-          todos.map((t) => (t.uid === todo.uid ? { ...t, due } : t))),
-      ],
+    mutationFn: ({ todos: items, due }: { todos: Todo[]; due: string }) =>
+      Promise.all(items.map((t) => caldav.updateTodo(collection, { ...t, due }))),
+    ...withOptimism<{ todos: Todo[]; due: string }>(qc, {
+      patches: ({ todos: items, due }) => {
+        const ids = new Set(items.map((t) => t.uid))
+        return [
+          patchList<Todo>(['todos', collection], (ts) =>
+            ts.map((t) => (ids.has(t.uid) ? { ...t, due } : t))),
+        ]
+      },
+      onSuccess: (_d, { todos: items }) => {
+        // Single-task due changes stay silent (as before); bulk gets confirmation.
+        if (items.length > 1) toast.success(`${items.length} tasks updated`)
+      },
     }),
   })
 
@@ -285,7 +300,7 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
       if (targetCollection === collection) return
       const curActive = optimisticActive ?? computedActive
       const draggedTodo = curActive.find((t) => t.uid === String(dragActive.id))
-      if (draggedTodo) moveTodoMut.mutate({ todo: draggedTodo, to: targetCollection })
+      if (draggedTodo) moveTodosMut.mutate({ todos: [draggedTodo], to: targetCollection })
       return
     }
     if (dragActive.id === over.id) return
@@ -380,7 +395,7 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
         }
       })
     }
-  }, [optimisticActive, computedActive, sections, getTaskBucket, dragUpdate, collection, moveTodoMut, readOnly, qc, updateSectionsMut])
+  }, [optimisticActive, computedActive, sections, getTaskBucket, dragUpdate, collection, moveTodosMut, readOnly, qc, updateSectionsMut])
 
   useDndMonitor({ onDragStart: handleDragStart, onDragEnd: handleDragEnd })
 
@@ -410,8 +425,8 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
     toggle: (todo) => toggleMut.mutate(todo),
     createInlineTodo,
     updateTitle: (todo, newSummary) => updateTitleMut.mutate({ todo, newSummary }),
-    moveToCollection: (todo, to) => moveTodoMut.mutate({ todo, to }),
-    setDue: (todo, due) => setDueMut.mutate({ todo, due }),
+    moveToCollection: (todos, to) => moveTodosMut.mutate({ todos, to }),
+    setDue: (todos, due) => setDueMut.mutate({ todos, due }),
     addSection,
     renameSection,
     deleteSection,

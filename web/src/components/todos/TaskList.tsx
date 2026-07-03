@@ -4,7 +4,7 @@
  * Pure render layer over the shared TaskListCore (see useTaskListCore).
  */
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import { CheckCircle2, ChevronDown, ChevronUp, Plus, Trash2, Check, X } from 'lucide-react'
 import { DragOverlay } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
@@ -13,6 +13,7 @@ import { TodoEditPanel } from '@/components/TodoEditPanel'
 import { TodoRow, SortableTodoRow, InlineNewRow } from './rows'
 import { TaskContextMenu } from './TaskContextMenu'
 import { useRowEditing } from './useRowEditing'
+import { useTaskSelection } from './useTaskSelection'
 import type { TaskListCore } from './useTaskListCore'
 import type { Todo, Section } from '@/types'
 
@@ -191,7 +192,17 @@ export function TaskList({ core, accentColor }: TaskListProps) {
     ungroupedTasks, sectionedTasks, completed, activeDragTodo,
   } = core
 
-  const { rowProps, panelOpenUid, closePanel, handleContainerBlur } = useRowEditing(core, accentColor)
+  // Visible row order for shift-click ranges: ungrouped, sections top-to-bottom, completed.
+  const orderedTodos = useMemo(
+    () => [
+      ...ungroupedTasks,
+      ...sections.flatMap(s => sectionedTasks[s.id] ?? []),
+      ...completed,
+    ],
+    [ungroupedTasks, sections, sectionedTasks, completed],
+  )
+  const selection = useTaskSelection(collection, orderedTodos)
+  const { rowProps, panelOpenUid, closePanel, handleContainerBlur } = useRowEditing(core, accentColor, selection)
 
   // ── Inline-add state (null | 'ungrouped' | sectionId) ─────────────────────
 
@@ -232,6 +243,7 @@ export function TaskList({ core, accentColor }: TaskListProps) {
   }
 
   const handleBlankAreaClick = () => {
+    if (selection.hasSelection) { selection.clear(); return }
     if (readOnly) return
     if (showInlineNew === 'ungrouped') inlineNewRef.current?.focus()
     else { setShowInlineNew('ungrouped'); setInlineNewValue('') }
@@ -253,8 +265,12 @@ export function TaskList({ core, accentColor }: TaskListProps) {
         <TaskContextMenu
           collections={collections}
           currentCollection={collection}
-          onMove={(to) => core.moveToCollection(todo, to)}
-          onSetDue={(due) => core.setDue(todo, due)}
+          targetCount={selection.targetsFor(todo).length}
+          onMove={(to) => {
+            core.moveToCollection(selection.targetsFor(todo), to)
+            if (selection.isSelected(todo.uid)) selection.clear()
+          }}
+          onSetDue={(due) => core.setDue(selection.targetsFor(todo), due)}
         >
           <SortableTodoRow {...rowProps(todo)} containerId={containerId} />
         </TaskContextMenu>
@@ -431,8 +447,12 @@ export function TaskList({ core, accentColor }: TaskListProps) {
                     <TaskContextMenu
                       collections={collections}
                       currentCollection={collection}
-                      onMove={(to) => core.moveToCollection(t, to)}
-                      onSetDue={(due) => core.setDue(t, due)}
+                      targetCount={selection.targetsFor(t).length}
+                      onMove={(to) => {
+                        core.moveToCollection(selection.targetsFor(t), to)
+                        if (selection.isSelected(t.uid)) selection.clear()
+                      }}
+                      onSetDue={(due) => core.setDue(selection.targetsFor(t), due)}
                     >
                       <TodoRow {...rowProps(t)} />
                     </TaskContextMenu>

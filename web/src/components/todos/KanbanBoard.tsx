@@ -6,7 +6,7 @@
  * (section_id), and column order (section registry) identically for both.
  */
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import { CheckCircle2, ChevronDown, Plus, Trash2, Check, X } from 'lucide-react'
 import { DragOverlay, useDroppable, useDndMonitor } from '@dnd-kit/core'
 import {
@@ -17,6 +17,7 @@ import { TodoEditPanel } from '@/components/TodoEditPanel'
 import { TodoRow, InlineNewRow } from './rows'
 import { TaskContextMenu } from './TaskContextMenu'
 import { useRowEditing } from './useRowEditing'
+import { useTaskSelection } from './useTaskSelection'
 import type { TaskListCore } from './useTaskListCore'
 import type { Todo, Section } from '@/types'
 
@@ -250,7 +251,17 @@ export function KanbanBoard({ core, accentColor }: KanbanBoardProps) {
     ungroupedTasks, sectionedTasks, completed, activeDragTodo,
   } = core
 
-  const { rowProps, panelOpenUid, closePanel, handleContainerBlur } = useRowEditing(core, accentColor)
+  // Visible card order for shift-click ranges: columns left-to-right, completed last.
+  const orderedTodos = useMemo(
+    () => [
+      ...ungroupedTasks,
+      ...sections.flatMap(s => sectionedTasks[s.id] ?? []),
+      ...completed,
+    ],
+    [ungroupedTasks, sections, sectionedTasks, completed],
+  )
+  const selection = useTaskSelection(collection, orderedTodos)
+  const { rowProps, panelOpenUid, closePanel, handleContainerBlur } = useRowEditing(core, accentColor, selection)
 
   // ── View-local state ──────────────────────────────────────────────────────
 
@@ -327,8 +338,12 @@ export function KanbanBoard({ core, accentColor }: KanbanBoardProps) {
             <TaskContextMenu
               collections={collections}
               currentCollection={collection}
-              onMove={(to) => core.moveToCollection(todo, to)}
-              onSetDue={(due) => core.setDue(todo, due)}
+              targetCount={selection.targetsFor(todo).length}
+              onMove={(to) => {
+                core.moveToCollection(selection.targetsFor(todo), to)
+                if (selection.isSelected(todo.uid)) selection.clear()
+              }}
+              onSetDue={(due) => core.setDue(selection.targetsFor(todo), due)}
             >
               {card}
             </TaskContextMenu>
@@ -501,8 +516,12 @@ export function KanbanBoard({ core, accentColor }: KanbanBoardProps) {
                     <TaskContextMenu
                       collections={collections}
                       currentCollection={collection}
-                      onMove={(to) => core.moveToCollection(t, to)}
-                      onSetDue={(due) => core.setDue(t, due)}
+                      targetCount={selection.targetsFor(t).length}
+                      onMove={(to) => {
+                        core.moveToCollection(selection.targetsFor(t), to)
+                        if (selection.isSelected(t.uid)) selection.clear()
+                      }}
+                      onSetDue={(due) => core.setDue(selection.targetsFor(t), due)}
                     >
                       <TodoRow {...rowProps(t)} />
                     </TaskContextMenu>

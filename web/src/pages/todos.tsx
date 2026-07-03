@@ -7,6 +7,7 @@ import { useCollectionStore } from '@/state/collection'
 import { Plus, Inbox, Columns3, LayoutList } from 'lucide-react'
 import { PageBar } from '@/components/layout/PageBar'
 import { TasksView } from '@/components/todos/TasksView'
+import { TaskBulkBar } from '@/components/todos/TaskBulkBar'
 import { NewTaskDialog } from '@/components/NewTaskDialog'
 import type { Collection } from '@/types'
 
@@ -48,6 +49,7 @@ export function TodosPage() {
         title="Inbox"
         controls={
           <>
+            <TaskBulkBar collection={collection} readOnly={readOnly} />
             <button
               onClick={() => setTaskView(collection, view === 'list' ? 'board' : 'list')}
               title={view === 'list' ? 'Board view' : 'List view'}

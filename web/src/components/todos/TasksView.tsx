@@ -8,9 +8,11 @@
  * keep their ordering until the server refetch lands.
  */
 
+import { useEffect } from 'react'
 import { useTaskListCore } from './useTaskListCore'
 import { TaskList } from './TaskList'
 import { KanbanBoard } from './KanbanBoard'
+import { useTaskSelectionStore } from '@/state/selection'
 import type { TaskViewMode } from '@/state/collection'
 
 export interface TasksViewProps {
@@ -23,6 +25,11 @@ export interface TasksViewProps {
 
 export function TasksView({ collection, accentColor, readOnly = false, view = 'list' }: TasksViewProps) {
   const core = useTaskListCore(collection, readOnly)
+
+  // A selection belongs to the list you made it in — navigating away drops it
+  // (but it survives the list/board toggle, which keeps this component mounted).
+  const clearSelection = useTaskSelectionStore((s) => s.clear)
+  useEffect(() => clearSelection(), [collection, clearSelection])
 
   if (core.isLoading) {
     return (

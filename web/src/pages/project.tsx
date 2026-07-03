@@ -21,6 +21,7 @@ import { toast } from 'sonner'
 import { Settings, Plus, Share2, Eye, Columns3, LayoutList } from 'lucide-react'
 import { PageBar } from '@/components/layout/PageBar'
 import { TasksView } from '@/components/todos/TasksView'
+import { TaskBulkBar } from '@/components/todos/TaskBulkBar'
 import { ShareDialog } from '@/components/ShareDialog'
 import { NewTaskDialog } from '@/components/NewTaskDialog'
 import {
@@ -471,6 +472,7 @@ export function ProjectPage() {
         }
         controls={
           <>
+            <TaskBulkBar collection={colName} readOnly={readOnly} colored />
             <button
               onClick={() => setTaskView(colName, view === 'list' ? 'board' : 'list')}
               title={view === 'list' ? 'Board view' : 'List view'}

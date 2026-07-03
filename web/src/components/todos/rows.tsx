@@ -22,7 +22,11 @@ export interface TodoRowProps {
   isEditingTitle: boolean
   editingValue: string
   isExpanded: boolean
-  onFirstClick: () => void
+  selected: boolean
+  /** Single click — selection (plain/ctrl/shift semantics live in the handler). */
+  onSelect: (e: React.MouseEvent) => void
+  /** Double click — enter edit mode (inline title + detail panel). */
+  onOpenEditor: () => void
   onEditValueChange: (v: string) => void
   onEditBlur: () => void
   onEditKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void
@@ -30,8 +34,8 @@ export interface TodoRowProps {
 
 export function TodoRow({
   todo, accentColor, readOnly, onToggle,
-  isEditingTitle, editingValue, isExpanded,
-  onFirstClick, onEditValueChange, onEditBlur, onEditKeyDown,
+  isEditingTitle, editingValue, isExpanded, selected,
+  onSelect, onOpenEditor, onEditValueChange, onEditBlur, onEditKeyDown,
 }: TodoRowProps) {
   const [hovered, setHovered] = useState(false)
   const done = todo.status === 'COMPLETED'
@@ -46,11 +50,14 @@ export function TodoRow({
         display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px',
         borderRadius: isExpanded ? '8px 8px 0 0' : 8,
         cursor: 'pointer', transition: 'background 100ms',
-        background: showControls ? 'var(--hover-bg)' : undefined,
+        background: selected || showControls ? 'var(--hover-bg)' : undefined,
+        // Double-click enters edit mode — must not flash a text selection first.
+        userSelect: 'none',
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onClick={!isEditingTitle ? onFirstClick : undefined}
+      onClick={!isEditingTitle ? onSelect : undefined}
+      onDoubleClick={!isEditingTitle ? onOpenEditor : undefined}
     >
       <button
         style={{ flexShrink: 0, background: 'none', border: 'none', cursor: readOnly ? 'default' : 'pointer', padding: 0 }}

@@ -11,7 +11,15 @@ one command from the repo root:
 
 This is the **`deno deploy` CLI** (bundled with modern Deno, `deno deploy
 --help`), not the older standalone `deployctl` — they target different
-generations of the platform and are not interchangeable. `DENO_DEPLOY_TOKEN`
+generations of the platform and are not interchangeable.
+
+**Known CLI bug (v0.0.9901): the command never exits.** The upload spinner
+sticks at "0/1 files uploaded" and spins forever, but the deploy itself is
+unaffected — upload, build, and prod routing complete server-side in ~30s.
+Wrap it (`timeout 90 deno deploy …`) or Ctrl-C it once the preview URL has
+printed, then confirm with `deno deploy deployments list --org=jpincas
+--app=calstakk` — a new revision with STATUS `routed` is live. (The PROD
+column reads "no" even for the live prod revision; don't trust it.) `DENO_DEPLOY_TOKEN`
 is exported in `~/.zshrc` for non-interactive auth; agent shells see it via
 plain env inheritance from the terminal Claude Code was launched from — so
 after adding/changing it, **restart the shell before relaunching Claude
