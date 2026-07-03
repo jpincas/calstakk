@@ -130,10 +130,14 @@ All datetimes are iCal compact strings (`20260101T090000Z`). Use `web/src/lib/da
 
 ## MCP Server
 
-`mcp/` is a full-suite MCP server (stdio) exposing everything to AI agents — 29 tools:
+`mcp/` is a full-suite MCP server exposing everything to AI agents — 29 tools:
 identity, collections, events (recurrence-aware `update_event`/`delete_event` with
 `scope: series | occurrence | this_and_future`), todos, sections, sync, free/busy,
-sharing, and admin. See the README's *MCP server* section for env vars and registration.
+sharing, and admin. Two transports: stdio (`mcp/main.ts`, for dev against localhost)
+and remote streamable HTTP served by the deployed server itself at **`/mcp`**
+(`mcp/http.ts` — stateless, POST only, Basic auth; tool traffic dispatches to the
+in-process CalDAV handler, no loopback HTTP). See the README's *MCP server* section
+for env vars and registration.
 
 Key facts:
 - **It reuses the web CalDAV client** (`web/src/api/`) and recurrence engine
@@ -147,8 +151,8 @@ Key facts:
 - Recurrence edit orchestration mirrors `web/src/components/calendar/useEventMutations.ts`;
   keep the two in sync if edit semantics ever change.
 - Gated like everything else: `deno lint` + `deno check mcp/main.ts` + integration tests
-  (`tests/mcp_test.ts`, `tests/mcp_recurrence_test.ts`) all run inside `deno task check`.
-  `deno task mcp` runs it locally.
+  (`tests/mcp_test.ts`, `tests/mcp_recurrence_test.ts`, `tests/mcp_http_test.ts`) all run
+  inside `deno task check`. `deno task mcp` runs it locally.
 
 ---
 

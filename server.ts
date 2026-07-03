@@ -8,6 +8,7 @@
 
 import { serveDir } from "@std/http/file-server";
 import { createHandler } from "./src/protocol.ts";
+import { createMcpHttpHandler } from "./mcp/http.ts";
 import { MemoryStorage } from "./src/storage.ts";
 import { KVStorage } from "./src/storage_kv.ts";
 import { loadConfig } from "./src/config.ts";
@@ -27,10 +28,14 @@ if (useMemory) {
 }
 
 const caldavHandler = createHandler(storage, config);
+const mcpHandler = createMcpHttpHandler(caldavHandler);
 const { host, port, webDir } = config.server;
 
 const handler = async (req: Request): Promise<Response> => {
   const url = new URL(req.url);
+
+  // MCP endpoint (streamable HTTP, stateless) for AI agents
+  if (url.pathname === "/mcp") return mcpHandler(req);
 
   // Serve the React SPA at /app/
   if (url.pathname.startsWith("/app/") && webDir) {
@@ -54,6 +59,7 @@ console.log(`CalStakk listening on http://${host}:${port}`);
 console.log(`  Principal:     http://${host}:${port}/principals/${config.user.username}`);
 console.log(`  Calendar home: http://${host}:${port}/calendars/${config.user.username}`);
 console.log(`  Web UI:        http://${host}:${port}/app/${webDir ? "" : "(disabled — set CALSTAKK_WEB_DIR)"}`);
+console.log(`  MCP:           http://${host}:${port}/mcp`);
 if (config.user.password) {
   console.log(`  Auth:          ${config.user.username} / (password set)`);
 } else {

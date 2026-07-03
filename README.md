@@ -37,7 +37,7 @@ Environment (loaded from `.env.local` / `.env` by the task):
 | `CALSTAKK_USERNAME` | `calstakk` | Acting user |
 | `CALSTAKK_PASSWORD` | *(unset)* | Acting user's password; omit for a no-auth dev server |
 
-Register with Claude Code:
+Register with Claude Code (local stdio, e.g. for dev against localhost):
 
 ```
 claude mcp add calstakk \
@@ -46,4 +46,17 @@ claude mcp add calstakk \
   --env CALSTAKK_PASSWORD=... \
   -- deno run --config /path/to/calstakk/deno.json --allow-net --allow-env \
      /path/to/calstakk/mcp/main.ts
+```
+
+### Remote endpoint
+
+The server also hosts the same tools directly at **`/mcp`** (MCP streamable
+HTTP, stateless, POST only) — no local checkout or Deno install needed on the
+client side. Auth is the same HTTP Basic auth as every other route; each
+request acts as the authenticated user. Register the deployed server with
+Claude Code:
+
+```
+claude mcp add calstakk --transport http https://your-server/mcp \
+  --header "Authorization: Basic $(echo -n 'user:password' | base64 -w0)"
 ```

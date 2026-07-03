@@ -24,6 +24,11 @@ export interface McpOptions {
   /** Acting user; omit both for a no-auth dev server. */
   username?: string
   password?: string
+  /**
+   * URL to present in whoami/error messages when `baseUrl` is a synthetic
+   * in-process dispatch origin (the HTTP endpoint). Defaults to `baseUrl`.
+   */
+  displayUrl?: string
 }
 
 export function createCalstakkMcpServer(opts: McpOptions): McpServer {
@@ -31,7 +36,7 @@ export function createCalstakkMcpServer(opts: McpOptions): McpServer {
   installShims(baseUrl)
 
   const client = new CalDAVClient({ username: opts.username, password: opts.password })
-  const ctx: Ctx = { client, baseUrl }
+  const ctx: Ctx = { client, baseUrl: opts.displayUrl?.replace(/\/+$/, '') ?? baseUrl }
 
   const server = new McpServer({ name: 'calstakk', version: '1.0.0' })
   registerIdentityTools(server, ctx)
