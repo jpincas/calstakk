@@ -69,15 +69,22 @@ Deno.test("API 401 omits the Basic challenge for SPA requests (X-Requested-With)
     const resp = await s.doNoRedirect("GET", "/api/me", { "X-Requested-With": "XMLHttpRequest" });
     assertEquals(resp.status, 401);
     assertEquals(resp.headers.has("WWW-Authenticate"), false, "SPA requests must not trigger the native browser dialog");
+  });
+});
 
-    // Browsers stamp Sec-Fetch-Mode on every fetch() — suppress for those too,
-    // so even stale bundles without X-Requested-With never pop the dialog.
-    const viaFetch = await s.doNoRedirect("GET", "/api/me", { "Sec-Fetch-Mode": "cors" });
-    assertEquals(viaFetch.headers.has("WWW-Authenticate"), false, "browser fetch() must not trigger the native dialog");
-
-    // Address-bar navigation still gets the challenge (Basic prompt is correct there).
-    const viaNav = await s.doNoRedirect("GET", "/api/me", { "Sec-Fetch-Mode": "navigate" });
-    assertEquals(viaNav.headers.has("WWW-Authenticate"), true, "navigations keep the RFC 7235 challenge");
+Deno.test("API 401 keeps the Basic challenge for real CalDAV clients that stamp Sec-Fetch-Mode", async () => {
+  await withServer(async (s) => {
+    // Regression: Thunderbird's native CalDAV requests also carry Sec-Fetch-Mode
+    // (e.g. "no-cors"), just like a browser fetch(). Keying the SPA-suppression
+    // heuristic off Sec-Fetch-Mode instead of (or in addition to) X-Requested-With
+    // silently dropped the challenge for these clients too, so they never even
+    // got a WWW-Authenticate header to retry against — the credentials were
+    // never wrong, the server just never asked. Only X-Requested-With may
+    // suppress the challenge.
+    for (const mode of ["cors", "no-cors", "same-origin", "navigate"]) {
+      const resp = await s.doNoRedirect("GET", "/api/me", { "Sec-Fetch-Mode": mode });
+      assertEquals(resp.headers.has("WWW-Authenticate"), true, `Sec-Fetch-Mode: ${mode} must still get the RFC 7235 challenge`);
+    }
   });
 });
 

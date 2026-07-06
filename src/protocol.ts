@@ -86,16 +86,15 @@ function xmlResponse(status: number, body: string, extraHeaders: Record<string, 
 }
 
 function unauthorized(req?: Request): Response {
-  // Suppress the Basic challenge for browser fetch() calls — browsers pop a
-  // native credentials dialog on WWW-Authenticate: Basic, hijacking the SPA's
-  // own login flow. Browsers auto-send Sec-Fetch-Mode on every request
-  // ("cors"/"same-origin" for fetch, "navigate" for address-bar visits), so
-  // this also covers stale bundles that predate X-Requested-With. CalDAV
-  // clients send neither header and get the regular RFC 7235 challenge.
-  const secFetchMode = req?.headers.get("Sec-Fetch-Mode");
-  const fromBrowserFetch =
-    req?.headers.get("X-Requested-With") === "XMLHttpRequest" ||
-    (!!secFetchMode && secFetchMode !== "navigate");
+  // Suppress the Basic challenge for the SPA's own fetch() calls — browsers pop
+  // a native credentials dialog on WWW-Authenticate: Basic, hijacking the SPA's
+  // own login flow. The SPA marks its requests with X-Requested-With for this
+  // purpose. Do NOT key off Sec-Fetch-Mode instead/as well: real CalDAV clients
+  // (e.g. Thunderbird) also stamp Sec-Fetch-Mode on native requests, so that
+  // heuristic silently dropped the challenge for genuine CalDAV auth attempts
+  // too, breaking Basic auth for them (they never even see a 401 they can act
+  // on — no header means Thunderbird can't retry with credentials).
+  const fromBrowserFetch = req?.headers.get("X-Requested-With") === "XMLHttpRequest";
   return new Response("Unauthorized", {
     status: 401,
     headers: fromBrowserFetch ? {} : { "WWW-Authenticate": 'Basic realm="CalStakk"' },
@@ -2494,8 +2493,20 @@ async function handleSyncCollection(
   sync: SyncCollectionQuery,
   storage: Storage,
 ): Promise<Response> {
+  // RFC 6578 §3.2 defines this report only for Depth: 0 and says other values
+  // "result in a 400 (Bad Request) error response" — but Thunderbird's CalDAV
+  // client sends Depth: 1 on every sync-collection REPORT regardless (a known
+  // client bug, not a variant request we asked for). Rejecting it strictly
+  // left Thunderbird calendars permanently flagged "momentarily unavailable"
+  // since their sync REPORT never succeeds. We deliberately deviate from the
+  // MUST here for interop: Depth: 1 is accepted and treated identically to
+  // Depth: 0 (sync-collection is inherently non-recursive; the value has no
+  // other meaning to act on). Any other value is still a genuine malformed
+  // request and stays a 400.
   const depth = req.headers.get("Depth");
-  if (depth !== null && depth !== "0") return respond(400, "sync-collection REPORT requires Depth: 0");
+  if (depth !== null && depth !== "0" && depth !== "1") {
+    return respond(400, "sync-collection REPORT requires Depth: 0");
+  }
 
   const { username, collection: colName } = parsed;
 

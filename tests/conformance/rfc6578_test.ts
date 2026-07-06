@@ -288,16 +288,38 @@ Deno.test("RFC 6578 §3.2 sync-token returned by REPORT is a valid URI", async (
   });
 });
 
-Deno.test("RFC 6578 §3.2 sync-collection REPORT with Depth:1 returns 400", async () => {
+Deno.test("RFC 6578 §3.2 sync-collection REPORT with Depth:2 returns 400", async () => {
   await withServer(async (s) => {
-    await s.mkcol("depth1-bad");
+    await s.mkcol("depth2-bad");
     const resp = await s.do(
       "REPORT",
-      collectionPath("depth1-bad"),
+      collectionPath("depth2-bad"),
+      withHeaders({ Depth: "2" }, xmlContentType()),
+      syncCollectionReport(""),
+    );
+    assertEquals(resp.status, 400, "Depth:2 on sync-collection REPORT must return 400");
+  });
+});
+
+Deno.test("RFC 6578 §3.2 sync-collection REPORT tolerates Depth:1 for Thunderbird interop", async () => {
+  await withServer(async (s) => {
+    // RFC 6578 §3.2 says this report is only defined for Depth: 0 and other
+    // values "result in a 400 (Bad Request)" — a strict MUST. Thunderbird's
+    // CalDAV client nonetheless always sends Depth: 1 on this REPORT, which
+    // left every Thunderbird-subscribed calendar permanently flagged
+    // "momentarily unavailable" since the sync REPORT could never succeed.
+    // We deliberately accept Depth: 1 as equivalent to Depth: 0 for interop —
+    // sync-collection is inherently non-recursive, so the value carries no
+    // other meaning to act on. See also §3.3 below for the equivalent check
+    // via a plain HTTP Depth header without a body-level depth conflict.
+    await s.mkcol("depth1-tolerated");
+    const resp = await s.do(
+      "REPORT",
+      collectionPath("depth1-tolerated"),
       withHeaders({ Depth: "1" }, xmlContentType()),
       syncCollectionReport(""),
     );
-    assertEquals(resp.status, 400, "Depth:1 on sync-collection REPORT must return 400");
+    assertEquals(resp.status, 207, "Depth:1 on sync-collection REPORT must be tolerated, not rejected");
   });
 });
 
@@ -466,20 +488,21 @@ Deno.test("RFC 6578 §3.3 sync-collection with sync-level infinite returns all d
   });
 });
 
-Deno.test("RFC 6578 §3.3 sync-collection REPORT with HTTP Depth:1 header returns 400", async () => {
+Deno.test("RFC 6578 §3.3 sync-collection REPORT with HTTP Depth:infinity header returns 400", async () => {
   await withServer(async (s) => {
     await s.mkcol("depth-hdr-bad");
-    // The HTTP Depth header must be '0'; any other value MUST return 400
+    // Depth:1 is deliberately tolerated for Thunderbird interop (see §3.2 test
+    // above) but other non-zero values are still genuinely malformed.
     const resp = await s.do(
       "REPORT",
       collectionPath("depth-hdr-bad"),
-      withHeaders({ Depth: "1" }, xmlContentType()),
+      withHeaders({ Depth: "infinity" }, xmlContentType()),
       syncCollectionReport(""),
     );
     assertEquals(
       resp.status,
       400,
-      "HTTP Depth:1 header with sync-collection REPORT must return 400",
+      "HTTP Depth:infinity header with sync-collection REPORT must return 400",
     );
   });
 });
