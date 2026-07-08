@@ -17,11 +17,15 @@ export const PALETTE: CollectionColor[] = [
   { bg: '#be185d', text: '#ffffff', light: '#fdf2f8', border: '#f9a8d4', muted: '#fbcfe8' },
 ]
 
-/** Swatch options for manual collection colour overrides (settings + new-list dialogs). */
+/**
+ * Swatch options for manual collection colour overrides (settings + new-list
+ * dialogs). Leads with the exact PALETTE bg values (same case) so a list's
+ * current palette-derived colour is always one of the selectable swatches,
+ * then a few extra hues for variety.
+ */
 export const SETTING_COLORS = [
-  '#2563EB', '#0891B2', '#059669', '#65A30D',
-  '#D97706', '#EA580C', '#DC2626', '#BE185D',
-  '#7C3AED', '#6366F1', '#8B5CF6', '#10B981',
+  ...PALETTE.map((p) => p.bg),
+  '#65A30D', '#6366F1', '#8B5CF6', '#10B981',
 ]
 
 export function collectionColor(collections: string[], name: string): CollectionColor {

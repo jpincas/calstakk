@@ -68,6 +68,10 @@ export function DashboardPage() {
 
   const activeAll = all.filter((t) => t.status !== 'COMPLETED' && t.status !== 'CANCELLED')
   const overdue = activeAll.filter((t) => isOverdue(t.due))
+  const overdueSorted = [...overdue].sort((a, b) => (parseCalDate(a.due!)?.getTime() ?? 0) - (parseCalDate(b.due!)?.getTime() ?? 0))
+  const OVERDUE_CAP = 8
+  const overdueShown = overdueSorted.slice(0, OVERDUE_CAP)
+  const overdueMore = overdueSorted.length - overdueShown.length
   const blockedUids = new Set(waiting.map((w) => `${w.todo._colRef}/${w.todo.uid}`))
 
   const occurrences: DayOccurrence[] = visible.flatMap((col, i) => {
@@ -133,21 +137,57 @@ export function DashboardPage() {
       />
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 26 }}>
-        {/* Overdue banner */}
+        {/* Overdue */}
         {overdue.length > 0 && (
-          <button
-            onClick={() => { void navigate('/today') }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: '9px 14px', borderRadius: 10, textAlign: 'left',
-              border: '1px solid color-mix(in srgb, var(--destructive) 35%, transparent)',
-              background: 'color-mix(in srgb, var(--destructive) 8%, transparent)',
-              color: 'var(--destructive)', fontSize: 16, fontWeight: 600, cursor: 'pointer',
-            }}
-          >
-            <AlertTriangle style={{ width: 16, height: 16, flexShrink: 0 }} />
-            {overdue.length} overdue task{overdue.length !== 1 ? 's' : ''} — see Today
-          </button>
+          <section>
+            <h2 style={{ ...sectionHeading, display: 'flex', alignItems: 'center', gap: 6, color: 'var(--destructive)' }}>
+              <AlertTriangle style={{ width: 13, height: 13, flexShrink: 0 }} />
+              {overdue.length} overdue task{overdue.length !== 1 ? 's' : ''}
+            </h2>
+            <div style={{ ...card, borderColor: 'color-mix(in srgb, var(--destructive) 35%, transparent)' }}>
+              {overdueShown.map((t, i) => (
+                <button
+                  key={`${t._colRef}-${t.uid}`}
+                  onClick={() => openTodo(t)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 9, width: '100%',
+                    padding: '8px 14px', background: 'none', border: 'none',
+                    borderTop: i > 0 ? '1px solid var(--border)' : 'none',
+                    cursor: 'pointer', textAlign: 'left',
+                  }}
+                >
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: t._colColor, flexShrink: 0 }} />
+                  <span style={{ fontSize: 16, color: 'var(--foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                    {t.summary}
+                  </span>
+                  {t.due && (
+                    <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--destructive)', flexShrink: 0 }}>
+                      {fmtDateShort(parseCalDate(t.due))}
+                    </span>
+                  )}
+                  <span style={{
+                    fontSize: 13, fontWeight: 500, padding: '2px 7px', borderRadius: 20,
+                    background: `${t._colColor}1A`, color: t._colColor, flexShrink: 0,
+                  }}>
+                    {t._colDisplayName}
+                  </span>
+                </button>
+              ))}
+              {overdueMore > 0 && (
+                <button
+                  onClick={() => { void navigate('/today') }}
+                  style={{
+                    display: 'block', width: '100%', padding: '8px 14px',
+                    border: 'none', borderTop: '1px solid var(--border)', background: 'none',
+                    color: 'var(--muted-foreground)', fontSize: 14, fontWeight: 500,
+                    textAlign: 'left', cursor: 'pointer',
+                  }}
+                >
+                  +{overdueMore} more — see Today
+                </button>
+              )}
+            </div>
+          </section>
         )}
 
         {/* The week ahead */}

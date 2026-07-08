@@ -28,7 +28,7 @@ import type { CalEvent, Collection, Todo } from '@/types'
 
 const localizer = dateFnsLocalizer({
   format, parse,
-  startOfWeek: () => startOfWeek(new Date(), { locale: enUS }),
+  startOfWeek: () => startOfWeek(new Date(), { locale: enUS, weekStartsOn: 1 }),
   getDay,
   locales: { 'en-US': enUS },
 })

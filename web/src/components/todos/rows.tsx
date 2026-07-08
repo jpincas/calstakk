@@ -33,7 +33,13 @@ export interface TodoRowProps {
   onOpenEditor: () => void
   onEditValueChange: (v: string) => void
   onEditBlur: () => void
-  onEditKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void
+  onEditKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
+}
+
+/** Auto-grow a textarea to fit its content — height tracks scrollHeight. */
+function autoSizeTextarea(el: HTMLTextAreaElement) {
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
 }
 
 /** Small inline pill for tags and the waiting indicator — flows with the summary text. */
@@ -100,14 +106,19 @@ export function TodoRow({
       </button>
       <div style={{ flex: 1, minWidth: 0 }}>
         {isEditingTitle ? (
-          <input
+          <textarea
             autoFocus
+            rows={1}
             value={editingValue}
-            onChange={(e) => onEditValueChange(e.target.value)}
+            onChange={(e) => { onEditValueChange(e.target.value); autoSizeTextarea(e.target) }}
             onBlur={onEditBlur}
-            onKeyDown={onEditKeyDown}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) e.preventDefault() // commit, not newline — see onEditKeyDown
+              onEditKeyDown(e)
+            }}
             onClick={(e) => e.stopPropagation()}
-            style={{ width: '100%', fontSize: 17, lineHeight: '18px', height: '18px', color: 'var(--foreground)', background: 'transparent', border: 'none', outline: 'none', padding: 0, margin: 0, fontFamily: 'inherit', display: 'block', userSelect: 'text' }}
+            ref={(el) => { if (el) autoSizeTextarea(el) }}
+            style={{ width: '100%', fontSize: 17, lineHeight: '18px', color: 'var(--foreground)', background: 'transparent', border: 'none', outline: 'none', padding: 0, margin: 0, fontFamily: 'inherit', display: 'block', userSelect: 'text', resize: 'none', overflow: 'hidden' }}
           />
         ) : (
           <>
@@ -197,9 +208,9 @@ export function SortableTodoRow({ containerId, ...rowProps }: TodoRowProps & { c
 export interface InlineNewRowProps {
   value: string
   accentColor: string
-  inputRef: React.RefObject<HTMLInputElement | null>
+  inputRef: React.RefObject<HTMLTextAreaElement | null>
   onChange: (v: string) => void
-  onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void
+  onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
   onBlur: () => void
 }
 
@@ -207,15 +218,19 @@ export function InlineNewRow({ value, accentColor, inputRef, onChange, onKeyDown
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, background: 'var(--hover-bg)' }}>
       <Circle style={{ width: 16, height: 16, color: accentColor, flexShrink: 0 }} />
-      <input
+      <textarea
         ref={inputRef}
         autoFocus
+        rows={1}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={onKeyDown}
+        onChange={(e) => { onChange(e.target.value); autoSizeTextarea(e.target) }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) e.preventDefault() // commit, not newline — see onKeyDown
+          onKeyDown(e)
+        }}
         onBlur={onBlur}
         placeholder="Task name…"
-        style={{ flex: 1, fontSize: 17, lineHeight: '18px', height: '18px', color: 'var(--foreground)', background: 'transparent', border: 'none', outline: 'none', padding: 0, margin: 0, fontFamily: 'inherit', display: 'block' }}
+        style={{ flex: 1, fontSize: 17, lineHeight: '18px', color: 'var(--foreground)', background: 'transparent', border: 'none', outline: 'none', padding: 0, margin: 0, fontFamily: 'inherit', display: 'block', resize: 'none', overflow: 'hidden' }}
       />
     </div>
   )

@@ -14,6 +14,7 @@ import { TodoRow, SortableTodoRow, InlineNewRow } from './rows'
 import { TaskContextMenu } from './TaskContextMenu'
 import { useRowEditing } from './useRowEditing'
 import { useTaskSelection } from './useTaskSelection'
+import { waitingOnCandidates } from '@/lib/deps'
 import type { TaskListCore } from './useTaskListCore'
 import type { Todo, Section } from '@/types'
 
@@ -186,6 +187,33 @@ function SectionHeader({
   )
 }
 
+// ── AddTaskRow ────────────────────────────────────────────────────────────────
+// Persistent (not hover-only) full-width affordance at the bottom of a group,
+// muted until hover — a lower-friction alternative to the section header's
+// hover-only Plus (kept alongside this, low risk).
+
+function AddTaskRow({ onClick }: { onClick: () => void }) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+        padding: '7px 10px', margin: '2px 0', borderRadius: 8,
+        background: hovered ? 'var(--hover-bg)' : 'transparent',
+        border: 'none', cursor: 'pointer', textAlign: 'left',
+        color: hovered ? 'var(--foreground)' : 'var(--muted-foreground)',
+        fontSize: 16, opacity: hovered ? 1 : 0.6, transition: 'opacity 120ms, background 100ms',
+      }}
+    >
+      <Plus style={{ width: 14, height: 14, flexShrink: 0 }} />
+      Add task
+    </button>
+  )
+}
+
 // ── TaskList ──────────────────────────────────────────────────────────────────
 
 export function TaskList({ core, accentColor }: TaskListProps) {
@@ -204,7 +232,6 @@ export function TaskList({ core, accentColor }: TaskListProps) {
     [ungroupedTasks, sections, sectionedTasks, completed],
   )
   const selection = useTaskSelection(collection, orderedTodos)
-  const { rowProps, panelOpenUid, closePanel, handleContainerBlur } = useRowEditing(core, accentColor, selection)
 
   // ── Inline-add state ──────────────────────────────────────────────────────
   // containerId is 'ungrouped' or a section id; afterUid pins the input row
@@ -212,7 +239,14 @@ export function TaskList({ core, accentColor }: TaskListProps) {
 
   const [showInlineNew, setShowInlineNew] = useState<{ containerId: string; afterUid?: string } | null>(null)
   const [inlineNewValue, setInlineNewValue] = useState('')
-  const inlineNewRef = useRef<HTMLInputElement>(null)
+  const inlineNewRef = useRef<HTMLTextAreaElement>(null)
+
+  const { rowProps, panelOpenUid, closePanel, handleContainerBlur } = useRowEditing(
+    core, accentColor, selection,
+    // Enter on an existing task's inline edit commits and opens a new row
+    // right below it, in the same bucket — mirrors the selection-Enter flow.
+    (todo) => { setShowInlineNew({ containerId: core.bucketOf(todo), afterUid: todo.uid }); setInlineNewValue('') },
+  )
 
   // ── Completed ─────────────────────────────────────────────────────────────
 
@@ -238,8 +272,8 @@ export function TaskList({ core, accentColor }: TaskListProps) {
     // Keep input open for multi-add; Escape or blur-with-empty closes it
   }
 
-  const handleInlineNewKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') { e.preventDefault(); commitInlineNew() }
+  const handleInlineNewKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitInlineNew() }
     else if (e.key === 'Escape') { setShowInlineNew(null); setInlineNewValue('') }
   }
 
@@ -297,6 +331,9 @@ export function TaskList({ core, accentColor }: TaskListProps) {
             if (selection.isSelected(todo.uid)) selection.clear()
           }}
           onSetDue={(due) => core.setDue(selection.targetsFor(todo), due)}
+          waitingOnCandidates={waitingOnCandidates(core.activeTodos, todo.uid)}
+          isWaiting={!!core.blockerFor(todo)}
+          onSetWaitingOn={(uid) => core.setWaitingOn(todo, uid)}
         >
           <SortableTodoRow {...rowProps(todo)} containerId={containerId} />
         </TaskContextMenu>
@@ -351,6 +388,9 @@ export function TaskList({ core, accentColor }: TaskListProps) {
               onBlur={handleInlineNewBlur}
             />
           )}
+          {!readOnly && !(showInlineNew?.containerId === 'ungrouped' && !showInlineNew.afterUid) && (
+            <AddTaskRow onClick={() => { setShowInlineNew({ containerId: 'ungrouped' }); setInlineNewValue('') }} />
+          )}
 
           {/* Sections */}
           <SortableContext items={sections.map(s => s.id)} strategy={verticalListSortingStrategy}>
@@ -394,6 +434,9 @@ export function TaskList({ core, accentColor }: TaskListProps) {
                     onKeyDown={handleInlineNewKey}
                     onBlur={handleInlineNewBlur}
                   />
+                )}
+                {!readOnly && !(showInlineNew?.containerId === section.id && !showInlineNew.afterUid) && (
+                  <AddTaskRow onClick={() => { setShowInlineNew({ containerId: section.id }); setInlineNewValue('') }} />
                 )}
               </SortableSection>
             ))}

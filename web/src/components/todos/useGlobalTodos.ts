@@ -89,3 +89,62 @@ export function useGlobalToggle() {
     }),
   })
 }
+
+/** Set a todo's due date from a global view, patching its collection's cache. */
+export function useGlobalSetDue() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ todo, due }: { todo: GlobalTodo; due: string }) => {
+      const { _colRef, ...clean } = todo
+      return caldav.updateTodo(_colRef, { ...clean, due })
+    },
+    ...withOptimism<{ todo: GlobalTodo; due: string }>(qc, {
+      patches: ({ todo, due }) => [
+        patchList<Todo>(['todos', todo._colRef], (todos) =>
+          todos.map((t) => (t.uid === todo.uid ? { ...t, due } : t))),
+      ],
+    }),
+  })
+}
+
+/** Set (or clear) a todo's "waiting on" dependency from a global view. */
+export function useGlobalSetWaitingOn() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ todo, uid }: { todo: GlobalTodo; uid: string | null }) => {
+      const { _colRef, ...clean } = todo
+      return caldav.updateTodo(_colRef, { ...clean, depends_on: uid ?? undefined })
+    },
+    ...withOptimism<{ todo: GlobalTodo; uid: string | null }>(qc, {
+      patches: ({ todo, uid }) => [
+        patchList<Todo>(['todos', todo._colRef], (todos) =>
+          todos.map((t) => (t.uid === todo.uid ? { ...t, depends_on: uid ?? undefined } : t))),
+      ],
+    }),
+  })
+}
+
+/** Move a todo from its own collection to another, patching both caches. */
+export function useGlobalMove() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ todo, to }: { todo: GlobalTodo; to: string }) => {
+      const { _colRef, ...clean } = todo
+      return caldav.moveTodo(_colRef, to, clean)
+    },
+    ...withOptimism<{ todo: GlobalTodo; to: string }>(qc, {
+      patches: ({ todo, to }) => {
+        // The annotation fields (_col*) linger in the target cache only until the
+        // next refetch; the hook re-derives them from collection meta on read.
+        const { _colRef, ...clean } = todo
+        return [
+          patchList<Todo>(['todos', _colRef], (todos) => todos.filter((t) => t.uid !== todo.uid)),
+          patchList<Todo>(['todos', to], (todos) => [
+            ...todos,
+            { ...clean, section_id: undefined, x_sort_order: undefined },
+          ]),
+        ]
+      },
+    }),
+  })
+}

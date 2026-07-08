@@ -21,7 +21,12 @@ export interface RowEditing {
   handleContainerBlur: (e: React.FocusEvent<HTMLDivElement>) => void
 }
 
-export function useRowEditing(core: TaskListCore, accentColor: string, selection: TaskSelection): RowEditing {
+export function useRowEditing(
+  core: TaskListCore,
+  accentColor: string,
+  selection: TaskSelection,
+  onCommitAndAddBelow?: (todo: Todo) => void,
+): RowEditing {
   const [editingTodo, setEditingTodo] = useState<{ uid: string; value: string } | null>(null)
   const [panelOpenUid, setPanelOpenUid] = useState<string | null>(null)
 
@@ -42,13 +47,14 @@ export function useRowEditing(core: TaskListCore, accentColor: string, selection
     })
   }
 
-  const handleEditKeyDown = (todo: Todo, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
+  const handleEditKeyDown = (todo: Todo, e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       if (!editingTodo) return
       const trimmed = editingTodo.value.trim()
       if (trimmed && trimmed !== todo.summary) core.updateTitle(todo, trimmed)
       setEditingTodo(null)
+      onCommitAndAddBelow?.(todo)
     } else if (e.key === 'Escape') {
       setEditingTodo(null)
       setPanelOpenUid(null)
@@ -70,7 +76,7 @@ export function useRowEditing(core: TaskListCore, accentColor: string, selection
     onOpenEditor: () => openEditor(todo),
     onEditValueChange: (v: string) => setEditingTodo({ uid: todo.uid, value: v }),
     onEditBlur: () => handleEditBlur(todo),
-    onEditKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => handleEditKeyDown(todo, e),
+    onEditKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => handleEditKeyDown(todo, e),
   })
 
   return {

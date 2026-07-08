@@ -140,7 +140,7 @@ function CollectionRow({
 
 export function CollectionSidebar({ collections, me }: Props) {
   const {
-    activeCollection, viewMode, hiddenCollections, focusedCollection, theme,
+    activeCollection, hiddenCollections, focusedCollection, theme,
     setCollection, setViewMode, toggleCollectionHidden, setFocusedCollection, toggleTheme,
   } = useCollectionStore()
   const navigate = useNavigate()
@@ -152,7 +152,7 @@ export function CollectionSidebar({ collections, me }: Props) {
   const names = collections.map((c) => c.ref)
   const { tags, waiting } = useGlobalTodos()
 
-  const isCalendarMode = viewMode === 'calendar' || location.pathname.startsWith('/calendar')
+  const isCalendarMode = location.pathname.startsWith('/calendar')
   const visible = collections.filter((c) => c.ref !== 'capture')
 
   const activeMode = NAV_ITEMS.find((item) =>

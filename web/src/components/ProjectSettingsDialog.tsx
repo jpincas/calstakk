@@ -9,7 +9,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { caldav } from '@/api'
 import { withOptimism, patchList } from '@/lib/optimistic'
-import { collectionColor, SETTING_COLORS } from '@/lib/colors'
+import { displayColor, SETTING_COLORS } from '@/lib/colors'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -35,8 +35,7 @@ export function ProjectSettingsDialog({ collectionRef, open, onOpenChange }: Pro
     queryFn: () => caldav.listCollections(),
   })
   const col = collections.find((c) => c.ref === collectionRef)
-  const names = collections.map((c) => c.ref)
-  const accent = col?.color ?? collectionColor(names, collectionRef).bg
+  const accent = displayColor(collections, collectionRef)
 
   const existingGroups = useMemo(() => {
     const groups = new Set<string>()
@@ -52,7 +51,7 @@ export function ProjectSettingsDialog({ collectionRef, open, onOpenChange }: Pro
   if (open !== wasOpen) {
     setWasOpen(open)
     if (open) {
-      setSettingColor(col?.color ?? '')
+      setSettingColor(col?.color ?? accent)
       setSettingGroup(col?.group ?? '')
     }
   }
@@ -107,7 +106,7 @@ export function ProjectSettingsDialog({ collectionRef, open, onOpenChange }: Pro
               }}
             >
               {SETTING_COLORS.map((hex) => {
-                const selected = settingColor === hex
+                const selected = settingColor.toLowerCase() === hex.toLowerCase()
                 return (
                   <button
                     key={hex}

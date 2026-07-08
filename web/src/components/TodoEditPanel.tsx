@@ -5,6 +5,7 @@ import { withOptimism, patchList } from '@/lib/optimistic'
 import { Trash2, Link } from 'lucide-react'
 import { toast } from 'sonner'
 import { DateInput } from '@/components/DateInput'
+import { waitingOnCandidates } from '@/lib/deps'
 import type { Todo } from '@/types'
 
 function icalToInput(s?: string): string {
@@ -71,21 +72,7 @@ export function TodoEditPanel({ todo, collection, accentColor, readOnly = false,
     queryFn: () => caldav.listTodos(collection),
   })
   const byUid = new Map(colTodos.map((t) => [t.uid, t]))
-  const leadsBackHere = (startUid: string): boolean => {
-    const seen = new Set<string>()
-    let cur: string | undefined = startUid
-    while (cur && !seen.has(cur)) {
-      if (cur === todo.uid) return true
-      seen.add(cur)
-      cur = byUid.get(cur)?.depends_on
-    }
-    return false
-  }
-  const dependencyCandidates = colTodos.filter((t) =>
-    t.uid !== todo.uid &&
-    t.status !== 'COMPLETED' && t.status !== 'CANCELLED' &&
-    !leadsBackHere(t.uid),
-  )
+  const dependencyCandidates = waitingOnCandidates(colTodos, todo.uid)
   // A stale value (blocker since completed/deleted) still needs a visible option.
   const staleDependency = dependsOn && !dependencyCandidates.some((t) => t.uid === dependsOn)
     ? byUid.get(dependsOn)

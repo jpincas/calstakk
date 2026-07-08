@@ -54,6 +54,8 @@ export interface TaskListCore {
   moveToCollection: (todos: Todo[], to: string) => void
   /** Set the due date on one or more tasks. */
   setDue: (todos: Todo[], due: string) => void
+  /** Set (or clear, with `null`) the task this todo is waiting on. */
+  setWaitingOn: (todo: Todo, dependsOnUid: string | null) => void
   // Section operations
   addSection: (name: string) => void
   renameSection: (id: string, name: string) => void
@@ -96,7 +98,7 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
 
   // Clear optimistic override once fresh server data arrives
   useEffect(() => {
-    if (optimisticActive !== null && todos !== prevTodosRef.current) setOptimisticActive(null)
+    if (optimisticActive !== null && todos !== prevTodosRef.current && pendingDrag.current === 0) setOptimisticActive(null)
     prevTodosRef.current = todos
   }, [todos, optimisticActive])
 
@@ -237,6 +239,17 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
         // Single-task due changes stay silent (as before); bulk gets confirmation.
         if (items.length > 1) toast.success(`${items.length} tasks updated`)
       },
+    }),
+  })
+
+  const setWaitingOnMut = useMutation({
+    mutationFn: ({ todo, dependsOnUid }: { todo: Todo; dependsOnUid: string | null }) =>
+      caldav.updateTodo(collection, { ...todo, depends_on: dependsOnUid ?? undefined }),
+    ...withOptimism<{ todo: Todo; dependsOnUid: string | null }>(qc, {
+      patches: ({ todo, dependsOnUid }) => [
+        patchList<Todo>(['todos', collection], (todos) =>
+          todos.map((t) => (t.uid === todo.uid ? { ...t, depends_on: dependsOnUid ?? undefined } : t))),
+      ],
     }),
   })
 
@@ -493,6 +506,7 @@ export function useTaskListCore(collection: string, readOnly: boolean): TaskList
     updateTitle: (todo, newSummary) => updateTitleMut.mutate({ todo, newSummary }),
     moveToCollection: (todos, to) => moveTodosMut.mutate({ todos, to }),
     setDue: (todos, due) => setDueMut.mutate({ todos, due }),
+    setWaitingOn: (todo, dependsOnUid) => setWaitingOnMut.mutate({ todo, dependsOnUid }),
     addSection,
     renameSection,
     deleteSection,

@@ -270,7 +270,7 @@ export function KanbanBoard({ core, accentColor }: KanbanBoardProps) {
 
   const [showInlineNew, setShowInlineNew] = useState<string | null>(null) // 'ungrouped' | sectionId | null
   const [inlineNewValue, setInlineNewValue] = useState('')
-  const inlineNewRef = useRef<HTMLInputElement>(null)
+  const inlineNewRef = useRef<HTMLTextAreaElement>(null)
 
   const [showCompleted, setShowCompleted] = useState(false)
 
@@ -307,7 +307,7 @@ export function KanbanBoard({ core, accentColor }: KanbanBoardProps) {
     // Keep input open for multi-add; Escape or blur-with-empty closes it
   }
 
-  const handleInlineNewKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleInlineNewKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter') { e.preventDefault(); commitInlineNew() }
     else if (e.key === 'Escape') { setShowInlineNew(null); setInlineNewValue('') }
   }
