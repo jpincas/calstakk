@@ -39,6 +39,7 @@ export function WaitingPage() {
                 todo={todo}
                 waitingOn={blocker.summary}
                 onToggle={(t) => toggle.mutate(t)}
+                onSelect={() => { void navigate(`/${todo._colRef}`) }}
                 onOpenCollection={(ref) => { void navigate(`/${ref}`) }}
               />
             ))}

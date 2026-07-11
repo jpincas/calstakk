@@ -54,6 +54,10 @@ export function useRowEditing(
       const trimmed = editingTodo.value.trim()
       if (trimmed && trimmed !== todo.summary) core.updateTitle(todo, trimmed)
       setEditingTodo(null)
+      if (panelOpenUid === todo.uid) {
+        setPanelOpenUid(null)
+        return
+      }
       onCommitAndAddBelow?.(todo)
     } else if (e.key === 'Escape') {
       setEditingTodo(null)

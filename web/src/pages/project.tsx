@@ -31,14 +31,15 @@ import type { Collection, Todo, CalEvent } from '@/types'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const BUCKET_ORDER = ['Today', 'This Week', 'This Month', 'Next Month', 'Later'] as const
+const BUCKET_ORDER = ['Today', 'Earlier today', 'This Week', 'This Month', 'Next Month', 'Later'] as const
 type Bucket = typeof BUCKET_ORDER[number]
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function getEventBucket(start: Date, today: Date): Bucket | null {
+function getEventBucket(occ: Occurrence, today: Date): Bucket | null {
+  const { start, end } = occ
   if (isBefore(start, startOfDay(today))) return null
-  if (isToday(start)) return 'Today'
+  if (isToday(start)) return isBefore(end, today) ? 'Earlier today' : 'Today'
   const wStart = startOfWeek(today, { weekStartsOn: 1 })
   const wEnd = endOfWeek(today, { weekStartsOn: 1 })
   if (!isBefore(start, wStart) && !isAfter(start, wEnd)) return 'This Week'
@@ -111,6 +112,7 @@ export function ProjectPage() {
     const today = new Date()
     const bucketed: Record<Bucket, Occurrence[]> = {
       Today: [],
+      'Earlier today': [],
       'This Week': [],
       'This Month': [],
       'Next Month': [],
@@ -126,7 +128,7 @@ export function ProjectPage() {
       .sort((a, b) => a.start.getTime() - b.start.getTime())
 
     for (const occ of occurrences) {
-      const bucket = getEventBucket(occ.start, today)
+      const bucket = getEventBucket(occ, today)
       if (!bucket) continue
       bucketed[bucket].push(occ)
     }
@@ -247,6 +249,7 @@ export function ProjectPage() {
                 const timeStr = allDay ? 'All day' : `${fmtTime(start)} – ${fmtTime(end)}`
                 const dayNum = format(start, 'd')
                 const monthStr = format(start, 'MMM').toUpperCase()
+                const isPast = label === 'Earlier today'
                 return (
                   <div
                     key={`${occ.master.uid}-${occ.key}`}
@@ -258,6 +261,7 @@ export function ProjectPage() {
                       borderBottom: '1px solid var(--border)',
                       cursor: 'pointer',
                       transition: 'background 100ms',
+                      opacity: isPast ? 0.55 : 1,
                     }}
                     onClick={() => { void navigate(calendarLinkFor(start)) }}
                     onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--hover-bg)' }}

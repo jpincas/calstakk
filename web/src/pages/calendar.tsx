@@ -369,11 +369,24 @@ export function CalendarPage() {
             selectable={canCreate}
             onSelectSlot={(slot) => {
               if (!canCreate) return
-              const start = new Date(slot.start)
-              const end = new Date(slot.end)
-              // Month-view (and all-day row) selections come through as whole days.
-              const allDay = view === 'month' ||
-                (start.getHours() === 0 && end.getHours() === 0 && end.getTime() - start.getTime() >= 24 * 60 * 60 * 1000)
+              let start = new Date(slot.start)
+              let end = new Date(slot.end)
+              const spanMs = end.getTime() - start.getTime()
+              if (view === 'month') {
+                // A single-day month click defaults to a timed 9am–10am event;
+                // a multi-day drag across the month grid stays all-day.
+                if (spanMs <= 24 * 60 * 60 * 1000) {
+                  start = new Date(start)
+                  start.setHours(9, 0, 0, 0)
+                  end = new Date(start.getTime() + 60 * 60_000)
+                  setDialog({ occ: null, col: defaultCol, range: { start, end, allDay: false } })
+                  return
+                }
+                setDialog({ occ: null, col: defaultCol, range: { start, end, allDay: true } })
+                return
+              }
+              // Week/day all-day row selections come through as whole days.
+              const allDay = start.getHours() === 0 && end.getHours() === 0 && spanMs >= 24 * 60 * 60 * 1000
               setDialog({ occ: null, col: defaultCol, range: { start, end, allDay } })
             }}
             draggableAccessor={(event) => event.resource.kind === 'event' && !readOnlyRefs.has(event.resource._colName)}

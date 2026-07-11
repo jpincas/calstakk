@@ -126,6 +126,23 @@ function parseLocal(date: string, time: string): Date | null {
   return new Date(y, m - 1, d, h, min, 0)
 }
 
+const ONE_HOUR_MS = 60 * 60_000
+
+/**
+ * When the start moves, keep the event's duration constant by shifting the
+ * end the same amount. Falls back to a 1hr duration if the prior start/end
+ * couldn't be parsed or the duration was non-positive.
+ */
+function shiftedEnd(form: FormState, newStartDate: string, newStartTime: string): Partial<FormState> {
+  const oldStart = parseLocal(form.startDate, form.startTime)
+  const oldEnd = parseLocal(form.endDate, form.endTime)
+  const newStart = parseLocal(newStartDate, newStartTime)
+  if (!newStart) return {}
+  const duration = oldStart && oldEnd ? oldEnd.getTime() - oldStart.getTime() : 0
+  const newEnd = new Date(newStart.getTime() + (duration > 0 ? duration : ONE_HOUR_MS))
+  return { endDate: format(newEnd, 'yyyy-MM-dd'), endTime: format(newEnd, 'HH:mm') }
+}
+
 interface Props {
   /** The occurrence being edited; null when creating. */
   occurrence: Occurrence | null
@@ -505,17 +522,17 @@ export function EventDialog({
                   className="evd-input"
                   value={form.startDate} disabled={readOnly}
                   onChange={(startDate) => {
-                    // Keep the end date in step when it would fall before the start.
-                    const patch: Partial<FormState> = { startDate }
-                    if (startDate > form.endDate) patch.endDate = startDate
-                    set(patch)
+                    // Preserve the event's duration: shift the end along with the start.
+                    set({ startDate, ...shiftedEnd(form, startDate, form.startTime) })
                   }}
                 />
                 {!form.allDay && (
                   <TimeInput
                     className="evd-input"
                     value={form.startTime} disabled={readOnly}
-                    onChange={(startTime) => set({ startTime })}
+                    onChange={(startTime) => {
+                      set({ startTime, ...shiftedEnd(form, form.startDate, startTime) })
+                    }}
                   />
                 )}
                 <span style={{ fontSize: 14.5, color: 'var(--muted-foreground)' }}>to</span>
