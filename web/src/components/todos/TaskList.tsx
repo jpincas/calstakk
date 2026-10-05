@@ -21,6 +21,10 @@ import type { Todo, Section } from '@/types'
 export interface TaskListProps {
   core: TaskListCore
   accentColor: string
+  /** Fired when the edit panel opens/closes. null = closed. */
+  onEditingChange?: (todo: Todo | null) => void
+  /** Ref to the NotesPane container — blur checks skip closing if focus moves here. */
+  notesPaneRef?: React.RefObject<HTMLDivElement | null>
 }
 
 // ── SortableSection ───────────────────────────────────────────────────────────
@@ -216,7 +220,7 @@ function AddTaskRow({ onClick }: { onClick: () => void }) {
 
 // ── TaskList ──────────────────────────────────────────────────────────────────
 
-export function TaskList({ core, accentColor }: TaskListProps) {
+export function TaskList({ core, accentColor, onEditingChange, notesPaneRef }: TaskListProps) {
   const {
     collection, readOnly, collections, sections,
     ungroupedTasks, sectionedTasks, completed, activeDragTodo,
@@ -246,7 +250,18 @@ export function TaskList({ core, accentColor }: TaskListProps) {
     // Enter on an existing task's inline edit commits and opens a new row
     // right below it, in the same bucket — mirrors the selection-Enter flow.
     (todo) => { setShowInlineNew({ containerId: core.bucketOf(todo), afterUid: todo.uid }); setInlineNewValue('') },
+    notesPaneRef,
   )
+
+  // Notify parent when edit panel opens/closes
+  useEffect(() => {
+    if (panelOpenUid) {
+      const todo = core.activeTodos.find((t) => t.uid === panelOpenUid)
+      onEditingChange?.(todo ?? null)
+    } else {
+      onEditingChange?.(null)
+    }
+  }, [panelOpenUid, core.activeTodos, onEditingChange])
 
   // ── Completed ─────────────────────────────────────────────────────────────
 

@@ -306,3 +306,66 @@ describe('VTODO RELATED-TO round-trip', () => {
     expect(todo.depends_on).toBeUndefined()
   })
 })
+
+// ── VTODO X-CALSTAKK-NOTES round-trip ───────────────────────────────────────
+
+describe('VTODO X-CALSTAKK-NOTES round-trip', () => {
+  it('parses and re-emits markdown notes', () => {
+    const block = [
+      'BEGIN:VTODO',
+      'UID:n1',
+      'SUMMARY:Task with notes',
+      'X-CALSTAKK-NOTES:*bold* and `code`',
+      'END:VTODO',
+    ].join('\r\n')
+    const todo = buildTodo(block, '/calendars/u/c')
+    expect(todo.notes).toBe('*bold* and `code`')
+
+    const out = contentLines(buildTodoIcs(todo))
+    expect(out).toContain('X-CALSTAKK-NOTES:*bold* and `code`')
+  })
+
+  it('round-trips description and notes independently', () => {
+    const block = [
+      'BEGIN:VTODO',
+      'UID:n2',
+      'SUMMARY:Both fields',
+      'DESCRIPTION:standard desc',
+      'X-CALSTAKK-NOTES:*markdown* notes',
+      'END:VTODO',
+    ].join('\r\n')
+    const todo = buildTodo(block, '/calendars/u/c')
+    expect(todo.description).toBe('standard desc')
+    expect(todo.notes).toBe('*markdown* notes')
+
+    const out = contentLines(buildTodoIcs(todo))
+    expect(out).toContain('DESCRIPTION:standard desc')
+    expect(out).toContain('X-CALSTAKK-NOTES:*markdown* notes')
+  })
+
+  it('omits X-CALSTAKK-NOTES when notes is empty', () => {
+    const block = [
+      'BEGIN:VTODO',
+      'UID:n3',
+      'SUMMARY:No notes',
+      'END:VTODO',
+    ].join('\r\n')
+    const todo = buildTodo(block, '/calendars/u/c')
+    expect(todo.notes).toBeUndefined()
+
+    const out = contentLines(buildTodoIcs(todo))
+    expect(out).not.toContain('X-CALSTAKK-NOTES')
+  })
+
+  it('escapes colons and newlines in notes', () => {
+    const block = [
+      'BEGIN:VTODO',
+      'UID:n4',
+      'SUMMARY:Escapes',
+      'X-CALSTAKK-NOTES:a line:with colons',
+      'END:VTODO',
+    ].join('\r\n')
+    const todo = buildTodo(block, '/calendars/u/c')
+    expect(todo.notes).toBe('a line:with colons')
+  })
+})

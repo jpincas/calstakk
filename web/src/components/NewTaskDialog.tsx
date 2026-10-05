@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { Link } from 'lucide-react'
 import { caldav } from '@/api'
 import { withOptimism, patchList } from '@/lib/optimistic'
+import { MarkdownNotes } from '@/components/MarkdownNotes'
 import type { Todo } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -51,6 +52,7 @@ const labelStyle: React.CSSProperties = {
 const emptyState = () => ({
   summary: '',
   description: '',
+  notes: '',
   due: '',
   status: 'NEEDS-ACTION',
   priority: 0,
@@ -61,14 +63,16 @@ const emptyState = () => ({
 export function NewTaskDialog({ collection, accentColor, open, onOpenChange }: Props) {
   const qc = useQueryClient()
   const [form, setForm] = useState(emptyState())
+  const [notesDraft, setNotesDraft] = useState('')
   const [catInput, setCatInput] = useState('')
 
-  const reset = () => { setForm(emptyState()); setCatInput('') }
+  const reset = () => { setForm(emptyState()); setNotesDraft(''); setCatInput('') }
 
   const newTodo = (): Omit<Todo, 'href'> => ({
     uid: crypto.randomUUID(),
     summary: form.summary,
     description: form.description.trim() || undefined,
+    notes: notesDraft.trim() || undefined,
     due: form.due ? form.due.replace(/-/g, '') : undefined,
     status: form.status,
     priority: form.priority || undefined,
@@ -112,9 +116,17 @@ export function NewTaskDialog({ collection, accentColor, open, onOpenChange }: P
             <textarea
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
-              placeholder="Add notes…"
+              placeholder="Add description…"
               rows={2}
               style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }}
+            />
+          </div>
+
+          <div>
+            <span style={labelStyle}>Notes</span>
+            <MarkdownNotes
+              value={notesDraft || undefined}
+              onSave={(v) => setNotesDraft(v ?? '')}
             />
           </div>
 

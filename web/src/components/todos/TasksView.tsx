@@ -14,6 +14,7 @@ import { TaskList } from './TaskList'
 import { KanbanBoard } from './KanbanBoard'
 import { useTaskSelectionStore } from '@/state/selection'
 import type { TaskViewMode } from '@/state/collection'
+import type { Todo } from '@/types'
 
 export interface TasksViewProps {
   collection: string
@@ -21,9 +22,13 @@ export interface TasksViewProps {
   /** True when the collection is shared with read access only — hide/disable every mutation affordance. */
   readOnly?: boolean
   view?: TaskViewMode
+  /** Fired when the edit panel opens/closes. null = closed. */
+  onEditingChange?: (todo: Todo | null) => void
+  /** Ref to the NotesPane container — blur checks skip closing if focus moves here. */
+  notesPaneRef?: React.RefObject<HTMLDivElement | null>
 }
 
-export function TasksView({ collection, accentColor, readOnly = false, view = 'list' }: TasksViewProps) {
+export function TasksView({ collection, accentColor, readOnly = false, view = 'list', onEditingChange, notesPaneRef }: TasksViewProps) {
   const core = useTaskListCore(collection, readOnly)
 
   // A selection belongs to the list you made it in — navigating away drops it
@@ -40,6 +45,6 @@ export function TasksView({ collection, accentColor, readOnly = false, view = 'l
   }
 
   return view === 'board'
-    ? <KanbanBoard core={core} accentColor={accentColor} />
-    : <TaskList core={core} accentColor={accentColor} />
+    ? <KanbanBoard core={core} accentColor={accentColor} onEditingChange={onEditingChange} notesPaneRef={notesPaneRef} />
+    : <TaskList core={core} accentColor={accentColor} onEditingChange={onEditingChange} notesPaneRef={notesPaneRef} />
 }

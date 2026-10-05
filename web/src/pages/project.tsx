@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { caldav } from '@/api'
@@ -15,6 +15,7 @@ import { ShareDialog } from '@/components/ShareDialog'
 import { NewTaskDialog } from '@/components/NewTaskDialog'
 import { EventDialog } from '@/components/calendar/EventDialog'
 import { ProjectSettingsDialog } from '@/components/ProjectSettingsDialog'
+import { MarkdownNotes } from '@/components/MarkdownNotes'
 import {
   format,
   isToday,
@@ -149,8 +150,11 @@ export function ProjectPage() {
   const [activeTab, setActiveTab] = useState<'Tasks' | 'Events'>('Tasks')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  const [editingTodo, setEditingTodo] = useState<Todo | null>(null)
+  const [editingNotes, setEditingNotes] = useState<string>('')
 
   const containerRef = useRef<HTMLDivElement>(null)
+  const notesPaneRef = useRef<HTMLDivElement>(null)
 
   // ResizeObserver for narrow/wide detection
   useEffect(() => {
@@ -177,6 +181,16 @@ export function ProjectPage() {
     }),
   })
 
+  const saveTodoNotes = useMutation({
+    mutationFn: (updated: Todo) => caldav.updateTodo(colName!, updated),
+    ...withOptimism<Todo>(qc, {
+      patches: (updated) => [
+        patchList<Todo>(['todos', colName!], (todos) =>
+          todos.map((t) => (t.uid === updated.uid ? updated : t))),
+      ],
+    }),
+  })
+
   // ── Name edit handler ─────────────────────────────────────────────────────
 
   const commitName = () => {
@@ -186,6 +200,16 @@ export function ProjectPage() {
       setEditingName(false)
     }
   }
+
+  // ── Edit panel sync ───────────────────────────────────────────────────────
+
+  const handleEditingChange = useCallback(
+    (todo: Todo | null) => {
+      setEditingTodo(todo)
+      setEditingNotes(todo?.notes ?? '')
+    },
+    [],
+  )
 
   // ── Render guards ─────────────────────────────────────────────────────────
 
@@ -199,10 +223,51 @@ export function ProjectPage() {
 
   // ── Pane renderers ────────────────────────────────────────────────────────
 
+  const NotesPane = (
+    <div
+      ref={notesPaneRef}
+      tabIndex={-1}
+      style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        minWidth: 0,
+        borderLeft: isNarrow ? 'none' : '1px solid var(--border)',
+        background: 'var(--card)',
+      }}
+    >
+      <div style={{
+        padding: '16px 16px 8px',
+        fontSize: 13,
+        fontWeight: 600,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        color: 'var(--muted-foreground)',
+      }}>
+        Notes
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px 16px' }}>
+        {editingTodo && (
+          <MarkdownNotes
+            value={editingNotes || undefined}
+            onSave={(v) => {
+              if (!readOnly && editingTodo) {
+                saveTodoNotes.mutate({ ...editingTodo, notes: v ?? '' })
+                setEditingNotes(v ?? '')
+              }
+            }}
+            readOnly={readOnly}
+          />
+        )}
+      </div>
+    </div>
+  )
+
   const TasksPane = (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
       <div style={{ flex: 1, overflowY: view === 'board' ? 'hidden' : 'auto', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <TasksView collection={colName} accentColor={color.bg} readOnly={readOnly} view={view} />
+        <TasksView collection={colName} accentColor={color.bg} readOnly={readOnly} view={view} onEditingChange={handleEditingChange} notesPaneRef={notesPaneRef} />
       </div>
     </div>
   )
@@ -501,7 +566,7 @@ export function ProjectPage() {
         ) : (
           <>
             {TasksPane}
-            {EventsPane}
+            {editingTodo ? NotesPane : EventsPane}
           </>
         )}
       </div>

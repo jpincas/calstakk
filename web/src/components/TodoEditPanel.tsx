@@ -6,6 +6,7 @@ import { Trash2, Link } from 'lucide-react'
 import { toast } from 'sonner'
 import { DateInput } from '@/components/DateInput'
 import { waitingOnCandidates } from '@/lib/deps'
+import { MarkdownNotes } from '@/components/MarkdownNotes'
 import type { Todo } from '@/types'
 
 function icalToInput(s?: string): string {
@@ -63,6 +64,7 @@ export function TodoEditPanel({ todo, collection, accentColor, readOnly = false,
   const [categories, setCategories] = useState<string[]>(todo.categories ?? [])
   const [catInput, setCatInput] = useState('')
   const [dependsOn, setDependsOn] = useState(todo.depends_on ?? '')
+  const [notes, setNotes] = useState(todo.notes ?? '')
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   // Candidates for "Waiting on": open tasks in this collection, minus self
@@ -81,6 +83,7 @@ export function TodoEditPanel({ todo, collection, accentColor, readOnly = false,
   const editedTodo = (): Todo => ({
     ...todo,
     description: description.trim() || undefined,
+    notes: notes.trim() || undefined,
     due: due ? due.replace(/-/g, '') : undefined,
     status,
     priority: priority || undefined,
@@ -132,11 +135,11 @@ export function TodoEditPanel({ todo, collection, accentColor, readOnly = false,
         gap: 10,
       }}
     >
-      {/* Notes */}
+      {/* Description */}
       <textarea
         value={description}
         onChange={(e) => setDescription(e.target.value)}
-        placeholder={readOnly ? undefined : 'Add notes…'}
+        placeholder={readOnly ? undefined : 'Add description…'}
         rows={2}
         disabled={readOnly}
         style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }}
@@ -279,6 +282,24 @@ export function TodoEditPanel({ todo, collection, accentColor, readOnly = false,
           />
         </div>
       </div>
+
+      {/* Markdown Notes */}
+      {!readOnly ? (
+        <div>
+          <span style={labelStyle}>Notes</span>
+          <MarkdownNotes
+            value={notes || undefined}
+            onSave={(v) => setNotes(v ?? '')}
+          />
+        </div>
+      ) : (
+        todo.notes && (
+          <>
+            <span style={labelStyle}>Notes</span>
+            <MarkdownNotes value={todo.notes} readOnly />
+          </>
+        )
+      )}
 
       {/* Footer: delete left, cancel+save right */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 2 }}>

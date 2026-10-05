@@ -125,6 +125,8 @@ export interface Todo {
   depends_on?: string
   categories?: string[]
   url?: string
+  /** Markdown notes, persisted as X-CALSTAKK-NOTES (non-standard). */
+  notes?: string
   x_sort_order?: number
   section_id?: string
   href: string

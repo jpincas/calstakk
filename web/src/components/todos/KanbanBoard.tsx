@@ -6,7 +6,7 @@
  * (section_id), and column order (section registry) identically for both.
  */
 
-import { useState, useRef, useMemo } from 'react'
+import { useState, useRef, useMemo, useEffect } from 'react'
 import { CheckCircle2, ChevronDown, Plus, Trash2, Check, X } from 'lucide-react'
 import { DragOverlay, useDroppable, useDndMonitor } from '@dnd-kit/core'
 import {
@@ -24,6 +24,10 @@ import type { Todo, Section } from '@/types'
 export interface KanbanBoardProps {
   core: TaskListCore
   accentColor: string
+  /** Fired when the edit panel opens/closes. null = closed. */
+  onEditingChange?: (todo: Todo | null) => void
+  /** Ref to the NotesPane container — blur checks skip closing if focus moves here. */
+  notesPaneRef?: React.RefObject<HTMLDivElement | null>
 }
 
 const COLUMN_WIDTH = 300
@@ -248,7 +252,7 @@ function UngroupedColumn({ highlighted, accentColor, header, children }: {
 
 // ── KanbanBoard ───────────────────────────────────────────────────────────────
 
-export function KanbanBoard({ core, accentColor }: KanbanBoardProps) {
+export function KanbanBoard({ core, accentColor, onEditingChange, notesPaneRef }: KanbanBoardProps) {
   const {
     collection, readOnly, collections, sections,
     ungroupedTasks, sectionedTasks, completed, activeDragTodo,
@@ -264,7 +268,17 @@ export function KanbanBoard({ core, accentColor }: KanbanBoardProps) {
     [ungroupedTasks, sections, sectionedTasks, completed],
   )
   const selection = useTaskSelection(collection, orderedTodos)
-  const { rowProps, panelOpenUid, closePanel, handleContainerBlur } = useRowEditing(core, accentColor, selection)
+  const { rowProps, panelOpenUid, closePanel, handleContainerBlur } = useRowEditing(core, accentColor, selection, undefined, notesPaneRef)
+
+  // Notify parent when edit panel opens/closes
+  useEffect(() => {
+    if (panelOpenUid) {
+      const todo = core.activeTodos.find((t) => t.uid === panelOpenUid)
+      onEditingChange?.(todo ?? null)
+    } else {
+      onEditingChange?.(null)
+    }
+  }, [panelOpenUid, core.activeTodos, onEditingChange])
 
   // ── View-local state ──────────────────────────────────────────────────────
 

@@ -864,6 +864,7 @@ export function buildTodo(
     depends_on: dependsOn ? unescapeIcal(dependsOn.value) : undefined,
     categories: all(p['CATEGORIES']).filter(Boolean),
     url: first(p['URL']) ?? undefined,
+    notes: first(p['X-CALSTAKK-NOTES']) ?? undefined,
     x_sort_order: first(p['X-SORT-ORDER']) ? parseInt(first(p['X-SORT-ORDER'])!) : undefined,
     section_id: first(p['X-SECTION-ID']) ?? undefined,
     href: `${collectionHref}/${uid}.ics`,
@@ -975,6 +976,7 @@ export function buildTodoIcs(todo: Partial<Todo> & { uid: string; summary: strin
   if (todo.depends_on) lines.push(`RELATED-TO;RELTYPE=DEPENDS-ON:${todo.depends_on}`)
   if (todo.url) lines.push(`URL:${todo.url}`)
   if (todo.categories?.length) todo.categories.forEach((c) => lines.push(`CATEGORIES:${escapeIcal(c)}`))
+  if (todo.notes) lines.push(`X-CALSTAKK-NOTES:${escapeIcal(todo.notes)}`)
   if (todo.x_sort_order !== undefined) lines.push(`X-SORT-ORDER:${todo.x_sort_order}`)
   if (todo.section_id) lines.push(`X-SECTION-ID:${todo.section_id}`)
   lines.push('END:VTODO')

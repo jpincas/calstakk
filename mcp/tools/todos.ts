@@ -24,6 +24,7 @@ const CreateTodoArgs = z.object({
   depends_on: z.string().optional().describe('uid of a todo this one waits on (RELATED-TO;RELTYPE=DEPENDS-ON); the todo shows as Waiting until that todo completes'),
   categories: z.array(z.string()).optional(),
   url: z.string().optional(),
+  notes: z.string().optional().describe('Markdown notes (X-CALSTAKK-NOTES)'),
   section_id: z.string().optional().describe('Section id from get_sections'),
   uid: z.string().optional().describe('Auto-generated when omitted'),
 })
@@ -41,6 +42,7 @@ const UpdateTodoArgs = z.object({
   depends_on: z.string().nullable().optional().describe('uid of a todo this one waits on (RELATED-TO;RELTYPE=DEPENDS-ON); null clears the dependency'),
   categories: z.array(z.string()).nullable().optional(),
   url: z.string().nullable().optional(),
+  notes: z.string().nullable().optional().describe('Markdown notes (X-CALSTAKK-NOTES); null clears'),
   section_id: z.string().nullable().optional().describe('Section id from get_sections; null ungroups the todo'),
 })
 
@@ -100,6 +102,7 @@ export function registerTodoTools(server: McpServer, ctx: Ctx): void {
           depends_on: args.depends_on,
           categories: args.categories,
           url: args.url,
+          notes: args.notes,
           section_id: args.section_id,
         })
         return { uid, created: true }
@@ -120,7 +123,7 @@ export function registerTodoTools(server: McpServer, ctx: Ctx): void {
         const next: Todo = { ...current }
         const keys = [
           'summary', 'description', 'due', 'status', 'priority',
-          'related_to', 'depends_on', 'categories', 'url', 'section_id',
+          'related_to', 'depends_on', 'categories', 'url', 'notes', 'section_id',
         ] as const
         let changed = false
         for (const k of keys) {

@@ -6,7 +6,7 @@
 
 import { useState } from 'react'
 import { isBefore, isToday, startOfDay } from 'date-fns'
-import { CheckCircle2, Circle, Hourglass, Sun } from 'lucide-react'
+import { CheckCircle2, Circle, FileText, Hourglass, Sun } from 'lucide-react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { parseCalDate, fmtDateShort } from '@/lib/dates'
@@ -50,8 +50,8 @@ function InlineChip({ bg, color, children }: { bg: string; color: string; childr
         display: 'inline-flex', alignItems: 'center', gap: 3,
         padding: '0 7px', borderRadius: 20, marginLeft: 6,
         background: bg, color,
-        fontSize: 13, fontWeight: 500, lineHeight: '16px',
-        verticalAlign: 'text-bottom', whiteSpace: 'nowrap',
+        fontSize: 13, fontWeight: 500, lineHeight: '18px',
+        whiteSpace: 'nowrap',
       }}
     >
       {children}
@@ -127,6 +127,11 @@ export function TodoRow({
               {(todo.categories ?? []).map((cat) => (
                 <InlineChip key={cat} bg={`${accentColor}1A`} color={accentColor}>{cat}</InlineChip>
               ))}
+              {todo.notes && (
+                <InlineChip bg="var(--hover-bg)" color="var(--muted-foreground)">
+                  <FileText style={{ width: 11, height: 11 }} />
+                </InlineChip>
+              )}
               {waiting && (
                 <InlineChip bg="var(--hover-bg)" color="var(--muted-foreground)">
                   <Hourglass style={{ width: 10, height: 10 }} />

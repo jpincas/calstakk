@@ -26,6 +26,7 @@ export function useRowEditing(
   accentColor: string,
   selection: TaskSelection,
   onCommitAndAddBelow?: (todo: Todo) => void,
+  notesPaneRef?: React.RefObject<HTMLDivElement | null>,
 ): RowEditing {
   const [editingTodo, setEditingTodo] = useState<{ uid: string; value: string } | null>(null)
   const [panelOpenUid, setPanelOpenUid] = useState<string | null>(null)
@@ -88,7 +89,10 @@ export function useRowEditing(
     panelOpenUid,
     closePanel: () => { setEditingTodo(null); setPanelOpenUid(null) },
     handleContainerBlur: (e) => {
-      if (!e.currentTarget.contains(e.relatedTarget)) setPanelOpenUid(null)
+      const related = e.relatedTarget as Node | null
+      if (related && notesPaneRef?.current?.contains(related)) return
+      if (related && e.currentTarget.contains(related)) return
+      setPanelOpenUid(null)
     },
   }
 }

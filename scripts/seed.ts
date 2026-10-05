@@ -70,6 +70,7 @@ function vtodo(fields: {
   uid?: string; summary: string; due?: string; status?: string
   priority?: number; description?: string; categories?: string[]
   section?: string; order?: number; dependsOn?: string
+  notes?: string
 }): string {
   const u = fields.uid ?? uid()
   const s = stamp()
@@ -83,6 +84,7 @@ function vtodo(fields: {
   if (fields.dependsOn) lines.push(`RELATED-TO;RELTYPE=DEPENDS-ON:${fields.dependsOn}`)
   if (fields.section) lines.push(`X-SECTION-ID:${fields.section}`)
   if (fields.order !== undefined) lines.push(`X-SORT-ORDER:${fields.order}`)
+  if (fields.notes) lines.push(`X-CALSTAKK-NOTES:${fields.notes}`)
   lines.push('END:VTODO')
   return `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalStakk//Seed//EN\r\n${lines.join('\r\n')}\r\nEND:VCALENDAR\r\n`
 }
@@ -341,16 +343,16 @@ function rawVcal(lines: string[]): string {
 
 const TODOS: Array<{ collection: string; fields: Parameters<typeof vtodo>[0] }> = [
   // ── Work todos (sectioned: In review / This sprint / Backlog; two stay ungrouped) ──
-  { collection: 'work', fields: { uid: 'seed-work-auth-spec', summary: 'Write technical spec for auth refactor', priority: 1, due: date(3), description: 'Cover OAuth2 flows, token storage, and migration path', section: 'work-this-sprint', order: 1000, categories: ['deep-work'] } },
-  { collection: 'work', fields: { summary: 'Review 3 open PRs in queue', priority: 2, due: date(1), section: 'work-in-review', categories: ['quick-win'] } },
-  { collection: 'work', fields: { summary: 'Update API docs after v2 release', priority: 3, due: date(5), section: 'work-backlog' } },
+  { collection: 'work', fields: { uid: 'seed-work-auth-spec', summary: 'Write technical spec for auth refactor', priority: 1, due: date(3), description: 'Cover OAuth2 flows, token storage, and migration path', section: 'work-this-sprint', order: 1000, categories: ['deep-work'], notes: 'Auth Refactor: OAuth2 flow diagrams, Token rotation strategy, Initial scoping meeting done, Deadline July 3rd' } },
+  { collection: 'work', fields: { summary: 'Review 3 open PRs in queue', priority: 2, due: date(1), section: 'work-in-review', categories: ['quick-win'], notes: 'PR 234 auth middleware, PR 251 cache invalidation, PR 258 typo fixes' } },
+  { collection: 'work', fields: { summary: 'Update API docs after v2 release', priority: 3, due: date(5), section: 'work-backlog', notes: 'API v2 Changes: New users endpoints, Pagination updated, Deprecation notices for v1' } },
   // Waiting on the auth spec (RELATED-TO;RELTYPE=DEPENDS-ON) — greyed until it completes
-  { collection: 'work', fields: { summary: 'Set up staging environment for new service', priority: 2, due: date(7), dependsOn: 'seed-work-auth-spec' } },
-  { collection: 'work', fields: { summary: 'Fix flaky integration test in CI', priority: 1, due: date(2), section: 'work-this-sprint', order: 2000 } },
+  { collection: 'work', fields: { summary: 'Set up staging environment for new service', priority: 2, due: date(7), dependsOn: 'seed-work-auth-spec', notes: 'Need AWS credentials from DevOps first.' } },
+  { collection: 'work', fields: { summary: 'Fix flaky integration test in CI', priority: 1, due: date(2), section: 'work-this-sprint', order: 2000, notes: 'Test fails intermittently on line 47, check the race condition in the mock server.' } },
   { collection: 'work', fields: { summary: 'Migrate legacy config to env vars', priority: 5, section: 'work-backlog' } },
-  { collection: 'work', fields: { summary: 'Draft Q3 OKRs', priority: 2, due: date(4), categories: ['deep-work'] } },
-  { collection: 'work', fields: { summary: 'Respond to security audit findings', priority: 1, due: date(1), description: 'Items 3, 7, 12 need immediate response', section: 'work-this-sprint', order: 3000 } },
-  { collection: 'work', fields: { summary: 'Archive old S3 buckets', priority: 9, status: 'IN-PROCESS', section: 'work-backlog' } },
+  { collection: 'work', fields: { summary: 'Draft Q3 OKRs', priority: 2, due: date(4), categories: ['deep-work'], notes: 'Q3 Objectives: Ship auth refactor, Reduce CI time by 40 percent, Launch beta program' } },
+  { collection: 'work', fields: { summary: 'Respond to security audit findings', priority: 1, due: date(1), description: 'Items 3, 7, 12 need immediate response', section: 'work-this-sprint', order: 3000, notes: 'Audit Findings Critical: Item 3 XSS vulnerability in comment field, Item 7 Missing rate limiting on auth, Low: Item 12 Outdated TLS config' } },
+  { collection: 'work', fields: { summary: 'Archive old S3 buckets', priority: 9, status: 'IN-PROCESS', section: 'work-backlog', notes: 'Check with legal before deleting. 3 buckets to archive.' } },
   { collection: 'work', fields: { summary: 'Onboard new engineer — access provisioning', status: 'COMPLETED', priority: 2 } },
   { collection: 'work', fields: { summary: 'Update runbook for deploy process', status: 'COMPLETED', priority: 3 } },
 
@@ -364,29 +366,29 @@ const TODOS: Array<{ collection: string; fields: Parameters<typeof vtodo>[0] }> 
   { collection: 'learning', fields: { summary: 'Finish TypeScript generics course', status: 'COMPLETED', priority: 2 } },
 
   // ── Personal todos ──
-  { collection: 'personal', fields: { uid: 'seed-personal-edinburgh', summary: 'Book Edinburgh accommodation', priority: 1, due: date(2), description: 'Check Airbnb + hotels near Royal Mile' } },
-  { collection: 'personal', fields: { summary: 'Pack for Edinburgh trip', priority: 3, due: date(5), dependsOn: 'seed-personal-edinburgh' } },
+  { collection: 'personal', fields: { uid: 'seed-personal-edinburgh', summary: 'Book Edinburgh accommodation', priority: 1, due: date(2), description: 'Check Airbnb + hotels near Royal Mile', notes: 'Edinburgh Accommodation: Near Royal Mile, 2 bedrooms, WiFi included, Budget 150 to 200 pounds per night' } },
+  { collection: 'personal', fields: { summary: 'Pack for Edinburgh trip', priority: 3, due: date(5), dependsOn: 'seed-personal-edinburgh', notes: 'Pack list: Passport, Chargers, Adapter UK plug, Walking boots, Rain jacket' } },
   { collection: 'personal', fields: { summary: 'Renew passport', priority: 1, due: date(21), description: 'Need for October trip — allow 6 weeks' } },
-  { collection: 'personal', fields: { summary: 'Call Mum back', priority: 2, due: date(0), categories: ['quick-win'] } },
-  { collection: 'personal', fields: { summary: 'Sort out contents insurance', priority: 3, categories: ['finance'] } },
-  { collection: 'personal', fields: { summary: "Get Anna's birthday present", priority: 1, due: date(3) } },
+  { collection: 'personal', fields: { summary: 'Call Mum back', priority: 2, due: date(0), categories: ['quick-win'], notes: 'She wanted to know about the Scotland trip plans.' } },
+  { collection: 'personal', fields: { summary: 'Sort out contents insurance', priority: 3, categories: ['finance'], notes: 'Insurance Options: Compare quotes, Check policy exclusions, Update inventory list, Due before August' } },
+  { collection: 'personal', fields: { summary: "Get Anna's birthday present", priority: 1, due: date(3), notes: 'She mentioned wanting a nice notebook and something from local bookshop, Budget 30 pounds' } },
   { collection: 'personal', fields: { summary: 'Cancel free trial before renewal', priority: 2, due: date(5) } },
-  { collection: 'personal', fields: { summary: 'Tax return', priority: 2, due: date(60), categories: ['finance'] } },
+  { collection: 'personal', fields: { summary: 'Tax return', priority: 2, due: date(60), categories: ['finance'], notes: 'Tax Return Checklist: Gather employment income, Calculate allowable expenses, Review previous year, Deadline January 31' } },
   { collection: 'personal', fields: { summary: 'Pick up dry cleaning', status: 'COMPLETED', priority: 4 } },
 
   // ── Health todos ──
-  { collection: 'health', fields: { summary: 'Book physio appointment', priority: 2, due: date(2), description: 'Left shoulder — ongoing issue' } },
-  { collection: 'health', fields: { summary: 'Order repeat prescription', priority: 1, due: date(3), categories: ['errand'] } },
-  { collection: 'health', fields: { summary: 'Research half-marathon training plan', priority: 4 } },
-  { collection: 'health', fields: { summary: 'Try new meal prep routine', priority: 6, status: 'IN-PROCESS' } },
+  { collection: 'health', fields: { summary: 'Book physio appointment', priority: 2, due: date(2), description: 'Left shoulder — ongoing issue', notes: 'Physio Notes: Left shoulder pain, Started 2 weeks ago, Worse after desk work, Try first thing Monday' } },
+  { collection: 'health', fields: { summary: 'Order repeat prescription', priority: 1, due: date(3), categories: ['errand'], notes: 'Medication: Vitamin D 1000IU, Refill 3 months supply' } },
+  { collection: 'health', fields: { summary: 'Research half-marathon training plan', priority: 4, notes: 'Half Marathon Prep: Goal 2 hours 15 minutes, Starting from 10K personal best 52min, Weeks 12, Weekly runs 3 to 4' } },
+  { collection: 'health', fields: { summary: 'Try new meal prep routine', priority: 6, status: 'IN-PROCESS', notes: 'Meal Prep Ideas: Chicken and rice bowls, Overnight oats, Smoothie packs, Prep Sunday 2 hours' } },
   { collection: 'health', fields: { summary: 'Schedule eye test', priority: 3 } },
 
   // ── Home todos (sectioned: This weekend / Someday; one stays ungrouped) ──
-  { collection: 'home', fields: { summary: 'Fix leaking kitchen tap', priority: 1, due: date(1), section: 'home-weekend' } },
+  { collection: 'home', fields: { summary: 'Fix leaking kitchen tap', priority: 1, due: date(1), section: 'home-weekend', notes: 'Tap Repair: Washer probably worn out, Need to turn off main water first, Call plumber if cannot fix, Parts 8 pounds at B and Q' } },
   { collection: 'home', fields: { summary: 'Clean oven before inspection', priority: 2, due: date(12) } },
-  { collection: 'home', fields: { summary: 'Buy new desk lamp', priority: 7, section: 'home-someday', categories: ['errand'] } },
+  { collection: 'home', fields: { summary: 'Buy new desk lamp', priority: 7, section: 'home-someday', categories: ['errand'], notes: 'Looking for LED desk lamp, Adjustable brightness, Warm white light, Budget 25 to 40 pounds' } },
   { collection: 'home', fields: { summary: 'Sort recycling', priority: 8, due: date(1), section: 'home-weekend' } },
-  { collection: 'home', fields: { summary: 'Repot the monstera', priority: 9, status: 'IN-PROCESS', section: 'home-someday' } },
+  { collection: 'home', fields: { summary: 'Repot the monstera', priority: 9, status: 'IN-PROCESS', section: 'home-someday', notes: 'Monstera Care: Need bigger pot 4 inches deeper, Fresh potting mix, Check roots for rot, This weekend project' } },
 
   // ── Inbox / capture todos ──
   { collection: 'capture', fields: { summary: 'Look into Tailscale for home network', priority: 5 } },
@@ -421,12 +423,12 @@ const ANNA_SECTIONS = [
 ]
 
 const ANNA_TODOS: Array<Parameters<typeof vtodo>[0]> = [
-  { summary: 'Prepare demo environment', priority: 1, due: date(2), section: 'team-launch-prep' },
-  { summary: 'Collect feedback from beta users', priority: 2, due: date(4), section: 'team-launch-prep' },
-  { summary: 'Write release notes', priority: 3, due: date(6), section: 'team-launch-prep' },
-  { summary: 'Triage open bugs', priority: 2, status: 'IN-PROCESS', section: 'team-ongoing' },
-  { summary: 'Update team wiki', priority: 5, section: 'team-ongoing' },
-  { summary: 'Order new monitors', priority: 4, status: 'COMPLETED' },
+  { summary: 'Prepare demo environment', priority: 1, due: date(2), section: 'team-launch-prep', notes: 'Demo Env Checklist: Provision staging server, Load test data, Verify integrations, Smoke test' },
+  { summary: 'Collect feedback from beta users', priority: 2, due: date(4), section: 'team-launch-prep', notes: 'Beta Feedback: Survey sent to 15 users, Response rate 7 of 15, Key themes UX and performance' },
+  { summary: 'Write release notes', priority: 3, due: date(6), section: 'team-launch-prep', notes: 'Release Notes v2.1: New dark mode and share dialog, Fixed sync issues and timer display' },
+  { summary: 'Triage open bugs', priority: 2, status: 'IN-PROCESS', section: 'team-ongoing', notes: 'Bug Triage: P0 Critical 2 items, P1 High 5 items, P2 Medium 12 items, P3 Low 8 items' },
+  { summary: 'Update team wiki', priority: 5, section: 'team-ongoing', notes: 'Wiki Updates Needed: Onboarding guide outdated, Add architecture diagram, Update API reference' },
+  { summary: 'Order new monitors', priority: 4, status: 'COMPLETED', notes: 'Ordered 3x 27 inch 4K monitors, Arriving next Tuesday, Budget approved' },
 ]
 
 // ── Main ─────────────────────────────────────────────────────────────────────
